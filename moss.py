@@ -147,6 +147,8 @@ def MoSS_Dir(
         # Mistura entre centróide puro e distribuição uniforme
         center = centers[c]
         mean = center * (1 - m_c) + (m_c / n_classes)
+        
+                        # concentra mais                       # mais uniforme
         concentration = (1 - m_c) * (mean * high_conc) + m_c * np.ones(n_classes)
 
         # Geração Dirichlet

@@ -99,7 +99,7 @@ with tab1:
         col1, col2, col3 = st.columns(3)
         with col1:
             X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=2, merging_factor=m)
-            fig = plot_3d(X_mvn, y_mvn, f"MVN (m={m})")
+            fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (m={m})")
             st.plotly_chart(fig, width="stretch")
 
         with col2:
@@ -123,7 +123,7 @@ with tab2:
 
         # Um gráfico embaixo do outro para melhor visualização
         X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=m)
-        fig = plot_3d(X_mvn, y_mvn, f"MVN (m={m})")
+        fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (m={m})")
         st.plotly_chart(fig, width="stretch")
 
         X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=m)
@@ -141,7 +141,7 @@ with tab3:
     merging_factors = [0, 0.5, 0.5]
 
     X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=merging_factors)
-    fig = plot_3d(X_mvn, y_mvn, f"MVN (m={merging_factors})")
+    fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (m={merging_factors})")
     st.plotly_chart(fig, width="stretch")
 
     X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=merging_factors)
@@ -154,7 +154,7 @@ with tab3:
     m = 0.1
 
     X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, alpha=alphas, merging_factor=m)
-    fig = plot_3d(X_mvn, y_mvn, f"MVN (alpha={alphas})")
+    fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (alpha={alphas})")
     st.plotly_chart(fig, width="stretch")
 
     X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, alpha=alphas, merging_factor=m)
