@@ -1,0 +1,162 @@
+import streamlit as st
+import plotly.express as px
+import numpy as np
+from moss import MoSS_MVN, MoSS_Dir, MoSS  # suas funções
+
+NUMBER_OF_SAMPLES = 500
+
+# ============================================================
+# Função de plotagem com Plotly Express
+# ============================================================
+def plot_3d(X, y, title):
+    n_classes = len(np.unique(y))
+    y_str = y.astype(str)
+
+    # Paleta de cores vibrante e contrastante
+    color_discrete_map = {
+        '0': '#FF1E00',  # vermelho vibrante
+        '1': '#0088FF',  # azul intenso
+        '2': '#00C853',  # verde forte
+        '3': '#FFD600',  # amarelo ouro
+        '4': '#AA00FF',  # roxo vivo
+    }
+
+    if n_classes == 2:
+        # Histograma interativo
+        fig = px.histogram(
+            x=X[:, 0],
+            color=y_str,
+            nbins=30,
+            barmode="overlay",
+            histnorm="probability density",
+            title=title,
+            labels={"x": "Score Classe 0", "color": "Classe"},
+            color_discrete_map=color_discrete_map
+        )
+        fig.update_traces(opacity=0.6)
+        fig.update_layout(
+            xaxis_title="Score Classe 0",
+            yaxis_title="Frequência",
+            legend_title="Classe",
+            template="plotly_white"
+        )
+        return fig
+
+    elif n_classes == 3:
+        # Scatter 3D interativo
+        fig = px.scatter_3d(
+            x=X[:, 0],
+            y=X[:, 1],
+            z=X[:, 2],
+            color=y_str,
+            opacity=0.8,
+            title=title,
+            labels={"x": "Score Classe 0", "y": "Score Classe 1", "z": "Score Classe 2", "color": "Classe"},
+            color_discrete_map=color_discrete_map
+        )
+        fig.update_layout(legend_title="Classe", template="plotly_white")
+        return fig
+
+    else:
+        # Scatter 2D interativo
+        fig = px.scatter(
+            x=X[:, 0],
+            y=X[:, 1],
+            color=y_str,
+            opacity=0.8,
+            title=title,
+            labels={"x": "Score 1", "y": "Score 2", "color": "Classe"},
+            color_discrete_map=color_discrete_map
+        )
+        fig.update_layout(legend_title="Classe", template="plotly_white")
+        return fig
+
+
+# ============================================================
+# Configuração do Streamlit
+# ============================================================
+st.set_page_config(layout="wide", page_title="Dashboard MoSS")
+st.title("🎯 Dashboard: MoSS e diferentes distribuições")
+
+# ============================================================
+# Abas principais
+# ============================================================
+tab1, tab2, tab3 = st.tabs([
+    "1️⃣ 2 Classes - (variando m)",
+    "2️⃣ 3 Classes - (variando m)",
+    "3️⃣ Configurações Avançadas (vetores e alpha)"
+])
+
+# ============================================================
+# 🟦 ABA 1 — 2 Classes, 3 Métodos
+# ============================================================
+with tab1:
+    st.header("1️⃣ Variando o Fator de Mistura m")
+
+    for m in [0.1, 0.5, 1.0]:
+        st.subheader(f"Merging Factor m = {m}")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=2, merging_factor=m)
+            fig = plot_3d(X_mvn, y_mvn, f"MVN (m={m})")
+            st.plotly_chart(fig, width="stretch")
+
+        with col2:
+            X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=2, merging_factor=m)
+            fig = plot_3d(X_dir, y_dir, f"Dirichlet (m={m})")
+            st.plotly_chart(fig, width="stretch")
+
+        with col3:
+            X_moss, y_moss = MoSS(n=NUMBER_OF_SAMPLES, alpha=0.5, merging_factor=m)
+            fig = plot_3d(X_moss, y_moss, f"MoSS Binário (m={m})")
+            st.plotly_chart(fig, width="stretch")
+
+# ============================================================
+# 🟩 ABA 2 — 3 Classes, 2 Métodos (variando m)
+# ============================================================
+with tab2:
+    st.header("2️⃣ Variando o Fator de Mistura m (3 Classes)")
+
+    for m in [0.1, 0.5, 1.0]:
+        st.subheader(f"Merging Factor m = {m}")
+
+        # Um gráfico embaixo do outro para melhor visualização
+        X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=m)
+        fig = plot_3d(X_mvn, y_mvn, f"MVN (m={m})")
+        st.plotly_chart(fig, width="stretch")
+
+        X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=m)
+        fig = plot_3d(X_dir, y_dir, f"Dirichlet (m={m})")
+        st.plotly_chart(fig, width="stretch")
+
+# ============================================================
+# 🟨 ABA 3 — Vetor de fatores e alpha pré-definido
+# ============================================================
+with tab3:
+    st.header("3️⃣ Vetores de Merging Factor e Alpha Pré-definido")
+
+    # --- Parte 1: Vetor de merging factor ---
+    st.subheader("🔹 Vetor de Merging Factor {0: 0, 1: 0.5, 2: 0.5}")
+    merging_factors = [0, 0.5, 0.5]
+
+    X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=merging_factors)
+    fig = plot_3d(X_mvn, y_mvn, f"MVN (m={merging_factors})")
+    st.plotly_chart(fig, width="stretch")
+
+    X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=merging_factors)
+    fig = plot_3d(X_dir, y_dir, f"Dirichlet (m={merging_factors})")
+    st.plotly_chart(fig, width="stretch")
+
+    # --- Parte 2: Alpha pré-definido ---
+    st.subheader("🔹 Alpha Pré-definido {0.8, 0.1, 0.1} e Merging Factor 0.1")
+    alphas = [0.8, 0.1, 0.1]
+    m = 0.1
+
+    X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, alpha=alphas, merging_factor=m)
+    fig = plot_3d(X_mvn, y_mvn, f"MVN (alpha={alphas})")
+    st.plotly_chart(fig, width="stretch")
+
+    X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, alpha=alphas, merging_factor=m)
+    fig = plot_3d(X_dir, y_dir, f"Dirichlet (alpha={alphas})")
+    st.plotly_chart(fig, width="stretch")
