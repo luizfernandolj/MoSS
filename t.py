@@ -3,7 +3,9 @@ import plotly.express as px
 import numpy as np
 from moss import MoSS_MVN, MoSS_Dir, MoSS  # suas funções
 
+
 NUMBER_OF_SAMPLES = 500
+
 
 # ============================================================
 # Função de plotagem com Plotly Express
@@ -54,7 +56,12 @@ def plot_3d(X, y, title):
             labels={"x": "Score Classe 0", "y": "Score Classe 1", "z": "Score Classe 2", "color": "Classe"},
             color_discrete_map=color_discrete_map
         )
-        fig.update_layout(legend_title="Classe", template="plotly_white")
+        fig.update_layout(
+            legend_title="Classe",
+            template="plotly_white",
+            height=1000,  # aumento da altura do gráfico 3D, conforme pedido anterior
+            font=dict(size=16)  # tamanho maior da fonte
+        )
         return fig
 
     else:
@@ -79,18 +86,18 @@ st.set_page_config(layout="wide", page_title="Dashboard MoSS")
 st.title("🎯 Dashboard: MoSS e diferentes distribuições")
 
 # ============================================================
-# Abas principais
+# Sidebar para controle dos menus
 # ============================================================
-tab1, tab2, tab3 = st.tabs([
-    "1️⃣ 2 Classes - (variando m)",
-    "2️⃣ 3 Classes - (variando m)",
-    "3️⃣ Configurações Avançadas (vetores e alpha)"
-])
+page = st.sidebar.radio(
+    "Selecione a aba:",
+    ("1️⃣ 2 Classes - (variando m)", "2️⃣ 3 Classes - (variando m)", "3️⃣ Configurações Avançadas (vetores e alpha)")
+)
 
 # ============================================================
-# 🟦 ABA 1 — 2 Classes, 3 Métodos
+# Abas principais via sidebar selecção
 # ============================================================
-with tab1:
+
+if page == "1️⃣ 2 Classes - (variando m)":
     st.header("1️⃣ Variando o Fator de Mistura m")
 
     for m in [0.1, 0.5, 1.0]:
@@ -100,22 +107,20 @@ with tab1:
         with col1:
             X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=2, merging_factor=m)
             fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (m={m})")
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, width='stretch')
 
         with col2:
             X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=2, merging_factor=m)
             fig = plot_3d(X_dir, y_dir, f"Dirichlet (m={m})")
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, width='stretch')
 
         with col3:
             X_moss, y_moss = MoSS(n=NUMBER_OF_SAMPLES, alpha=0.5, merging_factor=m)
             fig = plot_3d(X_moss, y_moss, f"MoSS Binário (m={m})")
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, width='stretch')
 
-# ============================================================
-# 🟩 ABA 2 — 3 Classes, 2 Métodos (variando m)
-# ============================================================
-with tab2:
+
+elif page == "2️⃣ 3 Classes - (variando m)":
     st.header("2️⃣ Variando o Fator de Mistura m (3 Classes)")
 
     for m in [0.1, 0.5, 1.0]:
@@ -124,16 +129,14 @@ with tab2:
         # Um gráfico embaixo do outro para melhor visualização
         X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=m)
         fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (m={m})")
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, width='stretch')
 
         X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=m)
         fig = plot_3d(X_dir, y_dir, f"Dirichlet (m={m})")
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, width='stretch')
 
-# ============================================================
-# 🟨 ABA 3 — Vetor de fatores e alpha pré-definido
-# ============================================================
-with tab3:
+
+elif page == "3️⃣ Configurações Avançadas (vetores e alpha)":
     st.header("3️⃣ Vetores de Merging Factor e Alpha Pré-definido")
 
     # --- Parte 1: Vetor de merging factor ---
@@ -142,11 +145,11 @@ with tab3:
 
     X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=merging_factors)
     fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (m={merging_factors})")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, width='stretch')
 
     X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=merging_factors)
     fig = plot_3d(X_dir, y_dir, f"Dirichlet (m={merging_factors})")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, width='stretch')
 
     # --- Parte 2: Alpha pré-definido ---
     st.subheader("🔹 Alpha Pré-definido {0.8, 0.1, 0.1} e Merging Factor 0.1")
@@ -155,8 +158,8 @@ with tab3:
 
     X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, alpha=alphas, merging_factor=m)
     fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (alpha={alphas})")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, width='stretch')
 
     X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, alpha=alphas, merging_factor=m)
     fig = plot_3d(X_dir, y_dir, f"Dirichlet (alpha={alphas})")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, width='stretch')
