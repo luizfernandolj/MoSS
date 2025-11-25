@@ -10,9 +10,9 @@ def transform_m(m):
     return 0.9 + t * (5 - 0.9)
 
 # ======================================================================
-# 💠 MoSS_MVN — Geração de scores no simplex via Normal Multivariada
+# 💠 MoSS_MN — Geração de scores no simplex via Normal Multivariada
 # ======================================================================
-def MoSS_MVN(
+def MoSS_MN(
     n: int = 1000,
     n_classes: int = 3,
     alpha: np.ndarray | None = None,
@@ -195,15 +195,14 @@ def MoSS(n=1000, alpha=0.5, merging_factor=0.5):
     n_score = 1 - (np.random.uniform(size=n_neg) ** merging_factor)
     
     # Construção dos arrays de features (duas colunas iguais)
-    X_pos = np.column_stack((p_score, p_score))
-    X_neg = np.column_stack((n_score, n_score))
+    moss = np.column_stack(
+        (
+            np.concatenate((p_score, n_score)), 
+            1 - np.concatenate((p_score, n_score)),
+            np.int16(np.concatenate((np.ones(len(p_score)), np.full(len(n_score), 0))))
+        )
+    )
     
-    # Labels correspondentes
-    y_pos = np.ones(n_pos, dtype=int)
-    y_neg = np.zeros(n_neg, dtype=int)
-    
-    # Concatenar dados positivos e negativos
-    X = np.vstack((X_pos, X_neg))
-    y = np.concatenate((y_pos, y_neg))
-    
-    return X, y
+    scores = moss[:, :2]
+    labels = moss[:, 2].astype(np.int16)
+    return scores, labels

@@ -1,7 +1,7 @@
 import streamlit as st
 import plotly.express as px
 import numpy as np
-from moss import MoSS_MVN, MoSS_Dir, MoSS  # suas funções
+from moss import MoSS_MN, MoSS_Dir, MoSS  # suas funções
 
 
 NUMBER_OF_SAMPLES = 500
@@ -105,8 +105,8 @@ if page == "1️⃣ 2 Classes - (variando m)":
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=2, merging_factor=m)
-            fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (m={m})")
+            X_mv, y_mv = MoSS_MN(n=NUMBER_OF_SAMPLES, n_classes=2, merging_factor=m)
+            fig = plot_3d(X_mv, y_mv, f"Multivariate Normal (m={m})")
             st.plotly_chart(fig, width='stretch')
 
         with col2:
@@ -127,8 +127,8 @@ elif page == "2️⃣ 3 Classes - (variando m)":
         st.subheader(f"Merging Factor m = {m}")
 
         # Um gráfico embaixo do outro para melhor visualização
-        X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=m)
-        fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (m={m})")
+        X_mv, y_mv = MoSS_MN(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=m)
+        fig = plot_3d(X_mv, y_mv, f"Multivariate Normal (m={m})")
         st.plotly_chart(fig, width='stretch')
 
         X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=m)
@@ -143,8 +143,8 @@ elif page == "3️⃣ Configurações Avançadas (vetores e alpha)":
     st.subheader("🔹 Vetor de Merging Factor {0: 0, 1: 0.5, 2: 0.5}")
     merging_factors = [0, 0.5, 0.5]
 
-    X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=merging_factors)
-    fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (m={merging_factors})")
+    X_mv, y_mv = MoSS_MN(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=merging_factors)
+    fig = plot_3d(X_mv, y_mv, f"Multivariate Normal (m={merging_factors})")
     st.plotly_chart(fig, width='stretch')
 
     X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, merging_factor=merging_factors)
@@ -156,8 +156,8 @@ elif page == "3️⃣ Configurações Avançadas (vetores e alpha)":
     alphas = [0.8, 0.1, 0.1]
     m = 0.1
 
-    X_mvn, y_mvn = MoSS_MVN(n=NUMBER_OF_SAMPLES, n_classes=3, alpha=alphas, merging_factor=m)
-    fig = plot_3d(X_mvn, y_mvn, f"Multivariate Normal (alpha={alphas})")
+    X_mv, y_mv = MoSS_MN(n=NUMBER_OF_SAMPLES, n_classes=3, alpha=alphas, merging_factor=m)
+    fig = plot_3d(X_mv, y_mv, f"Multivariate Normal (alpha={alphas})")
     st.plotly_chart(fig, width='stretch')
 
     X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, alpha=alphas, merging_factor=m)
