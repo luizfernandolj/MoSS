@@ -76,7 +76,7 @@ def run_experiment(quadapt, quadapt_variant_test_name):
                         merging_factors=MERGING_FACTORS
                     )
                     
-                    test_scores, test_labels = quadapt_i.MoSS(
+                    test_scores, test_labels = quadapt.MoSS(
                         SIZE_OF_SAMPLES,
                         alpha=alpha,
                         m=m_test
@@ -85,6 +85,12 @@ def run_experiment(quadapt, quadapt_variant_test_name):
                     best_m = quadapt_i._get_best_merging_factor(test_scores)
                     
                     mae = np.mean(np.abs(prediction[1] - alpha))  #
+                    if mae > 1:
+                        import pdb 
+                        pdb.set_trace()
+                        mae = 1.0
+                        print(prediction, alpha)
+                        
                     m_proximity = abs(best_m - m_test)
                 
                     result_ = {

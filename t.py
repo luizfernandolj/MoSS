@@ -184,3 +184,7 @@ elif page == "Experiments":
     fig = px.box(results, x="MoSS Variant Test", y="MAE", color="MoSS Variant Train",
                  title="MAE Distribution by MoSS Variant Test and Train")
     st.plotly_chart(fig, use_container_width=True)
+    
+    fig = px.box(results, x="MoSS Variant Test", y="MAE", color="MoSS Variant Test",
+                 title="m_proximity Distribution by MoSS Variant Test")
+    st.plotly_chart(fig, use_container_width=True)
