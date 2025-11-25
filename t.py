@@ -90,7 +90,7 @@ st.title("🎯 Dashboard: MoSS e diferentes distribuições")
 # ============================================================
 page = st.sidebar.radio(
     "Selecione a aba:",
-    ("1️⃣ 2 Classes - (variando m)", "2️⃣ 3 Classes - (variando m)", "3️⃣ Configurações Avançadas (vetores e alpha)")
+    ("1️⃣ 2 Classes - (variando m)", "2️⃣ 3 Classes - (variando m)", "3️⃣ Configurações Avançadas (vetores e alpha)", "Experiments")
 )
 
 # ============================================================
@@ -163,3 +163,24 @@ elif page == "3️⃣ Configurações Avançadas (vetores e alpha)":
     X_dir, y_dir = MoSS_Dir(n=NUMBER_OF_SAMPLES, n_classes=3, alpha=alphas, merging_factor=m)
     fig = plot_3d(X_dir, y_dir, f"Dirichlet (alpha={alphas})")
     st.plotly_chart(fig, width='stretch')
+    
+elif page == "Experiments":
+    import pandas as pd
+    import numpy as np
+    import plotly.express as px
+    
+    result_moss = pd.read_csv("results/results_MoSS.csv")
+    result_moss_mn = pd.read_csv("results/results_MoSS_MN.csv")
+    result_moss_dir = pd.read_csv("results/results_MoSS_Dir.csv")
+    results = pd.concat([result_moss, result_moss_mn, result_moss_dir], axis=0)
+    
+    st.header("Experiments Results Analysis")
+    st.dataframe(results)
+    
+    fig = px.box(results, x="MoSS Variant Test", y="m_proximity", color="MoSS Variant Train",
+                 title="m_proximity Distribution by MoSS Variant Test and Train")
+    st.plotly_chart(fig, use_container_width=True)
+    
+    fig = px.box(results, x="MoSS Variant Test", y="MAE", color="MoSS Variant Train",
+                 title="MAE Distribution by MoSS Variant Test and Train")
+    st.plotly_chart(fig, use_container_width=True)
