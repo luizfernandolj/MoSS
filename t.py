@@ -90,7 +90,7 @@ st.title("🎯 Dashboard: MoSS e diferentes distribuições")
 # ============================================================
 page = st.sidebar.radio(
     "Selecione a aba:",
-    ("1️⃣ 2 Classes - (variando m)", "2️⃣ 3 Classes - (variando m)", "3️⃣ Configurações Avançadas (vetores e alpha)", "Experiments")
+    ("Experiments", "1️⃣ 2 Classes - (variando m)", "2️⃣ 3 Classes - (variando m)", "3️⃣ Configurações Avançadas (vetores e alpha)")
 )
 
 # ============================================================
@@ -179,12 +179,65 @@ elif page == "Experiments":
     
     fig = px.box(results, x="MoSS Variant Test", y="m_proximity", color="MoSS Variant Train",
                  title="m_proximity Distribution by MoSS Variant Test and Train")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     fig = px.box(results, x="MoSS Variant Test", y="MAE", color="MoSS Variant Train",
                  title="MAE Distribution by MoSS Variant Test and Train")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     fig = px.box(results, x="MoSS Variant Test", y="MAE", color="MoSS Variant Test",
                  title="m_proximity Distribution by MoSS Variant Test")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
+    
+    st.markdown("---")
+    st.subheader("📊 Detailed Analysis by Quantifier and MoSS Variant")
+    
+    result2_moss = pd.read_csv("results2/results_MoSS.csv")
+    #result2_moss_mn = pd.read_csv("results/results_MoSS_MN.csv")
+    #result2_moss_dir = pd.read_csv("results2/results_MoSS_Dir.csv")
+    results = result2_moss #pd.concat([result2_moss, result2_moss_dir], axis=0)
+    
+    # Selector for Quantifier column
+    selected_moss_train_variant_options = results["MoSS Variant Train"].unique()
+    selected_moss_train_variant = st.selectbox("Select MoSS Variant Train:", selected_moss_train_variant_options)
+
+    # Range selector for m_train
+    m_train_options = sorted(results["m_train"].unique())
+    selected_m_train = st.selectbox("Select m_train value:", m_train_options)
+
+    # Filter data based on selections
+    filtered_results = results[
+        (results["MoSS Variant Train"] == selected_moss_train_variant) & 
+        (results["m_train"] == selected_m_train)
+    ]
+    filtered_results = filtered_results.groupby(["MoSS Variant Train", "Quantifier", "m_test"]).agg({
+        "MAE": "median",
+    }).reset_index()
+    
+    filtered_results = filtered_results.sort_values(by="m_test")
+
+    # Plot 1: MAE
+    # Create color mapping
+    color_map = {}
+    for qtf in filtered_results["Quantifier"].unique():
+        if qtf == "CC":
+            color_map[qtf] = "#4A90E2"  # bright blue
+        elif qtf.startswith("QuadaptMoSS_MN"):
+            color_map[qtf] = "#F5A623"  # vibrant orange
+        elif qtf.startswith("QuadaptMoSS"):
+            color_map[qtf] = "#50C878"  # emerald green
+        elif not qtf.startswith("Quadapt"):
+            color_map[qtf] = "#FF6B6B"  # coral red
+        else:
+            color_map[qtf] = "#9B59B6"  # amethyst purple for other Quadapt variants
+    
+    fig_mae = px.line(
+        filtered_results, 
+        x="m_test", 
+        y="MAE", 
+        color="Quantifier",
+        color_discrete_map=color_map,
+        markers=True
+    )
+    fig_mae.add_vline(x=selected_m_train, line_width=4, line_dash="dash", line_color="white")
+    st.plotly_chart(fig_mae, width='stretch')

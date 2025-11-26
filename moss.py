@@ -14,7 +14,7 @@ def transform_m(m):
 # ======================================================================
 def MoSS_MN(
     n: int = 1000,
-    n_classes: int = 3,
+    n_classes: int = 2,
     alpha: np.ndarray | None = None,
     merging_factor: float | np.ndarray = 0.0,
 ):
@@ -94,7 +94,7 @@ def MoSS_MN(
 # ======================================================================
 def MoSS_Dir(
     n: int = 1000,
-    n_classes: int = 3,
+    n_classes: int = 2,
     alpha: np.ndarray | None = None,
     merging_factor: float | np.ndarray = 0.5,
 ):
@@ -186,6 +186,8 @@ def MoSS(n=1000, alpha=0.5, merging_factor=0.5):
     y : np.ndarray, shape (n,)
         Labels correspondentes (0 ou 1).
     """
+    if isinstance(alpha, list):
+        alpha = float(alpha[1])
     n_pos = int(n * alpha)
     n_neg = n - n_pos
     
@@ -197,8 +199,8 @@ def MoSS(n=1000, alpha=0.5, merging_factor=0.5):
     # Construção dos arrays de features (duas colunas iguais)
     moss = np.column_stack(
         (
-            np.concatenate((p_score, n_score)), 
             1 - np.concatenate((p_score, n_score)),
+            np.concatenate((p_score, n_score)), 
             np.int16(np.concatenate((np.ones(len(p_score)), np.full(len(n_score), 0))))
         )
     )
