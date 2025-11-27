@@ -168,26 +168,7 @@ elif page == "Experiments":
     import pandas as pd
     import numpy as np
     import plotly.express as px
-    
-    result_moss = pd.read_csv("results/results_MoSS.csv")
-    result_moss_mn = pd.read_csv("results/results_MoSS_MN.csv")
-    result_moss_dir = pd.read_csv("results/results_MoSS_Dir.csv")
-    results = pd.concat([result_moss, result_moss_mn, result_moss_dir], axis=0)
-    
-    st.header("Experiments Results Analysis")
-    st.dataframe(results)
-    
-    fig = px.box(results, x="MoSS Variant Test", y="m_proximity", color="MoSS Variant Train",
-                 title="m_proximity Distribution by MoSS Variant Test and Train")
-    st.plotly_chart(fig, width='stretch')
-    
-    fig = px.box(results, x="MoSS Variant Test", y="MAE", color="MoSS Variant Train",
-                 title="MAE Distribution by MoSS Variant Test and Train")
-    st.plotly_chart(fig, width='stretch')
-    
-    fig = px.box(results, x="MoSS Variant Test", y="MAE", color="MoSS Variant Test",
-                 title="m_proximity Distribution by MoSS Variant Test")
-    st.plotly_chart(fig, width='stretch')
+    import plotly.graph_objects as go
     
     st.markdown("---")
     st.subheader("📊 Detailed Analysis by Quantifier and MoSS Variant")
@@ -200,19 +181,57 @@ elif page == "Experiments":
     # Selector for Quantifier column
     selected_moss_train_variant_options = results["MoSS Variant Train"].unique()
     selected_moss_train_variant = st.selectbox("Select MoSS Variant Train:", selected_moss_train_variant_options)
+    
+    selected_moss_test_variant_options = results["MoSS Variant Test"].unique()
+    selected_moss_test_variant = st.selectbox("Select MoSS Variant Test:", selected_moss_test_variant_options)
 
     # Range selector for m_train
     m_train_options = sorted(results["m_train"].unique())
     selected_m_train = st.selectbox("Select m_train value:", m_train_options)
 
+    # Multi-select for methods to plot
+    method_options = ["None", "QuadaptMoSS", "QuadaptMoSS_MN"]
+    selected_methods = st.multiselect(
+        "Select methods to include in plot:",
+        options=method_options,
+        default=method_options
+    )
+
     # Filter data based on selections
     filtered_results = results[
         (results["MoSS Variant Train"] == selected_moss_train_variant) & 
-        (results["m_train"] == selected_m_train)
+        (results["m_train"] == selected_m_train) &
+        (results["MoSS Variant Test"] == selected_moss_test_variant)
     ]
+    
+    # Create a copy for boxplot (before aggregation)
+    filtered_results_raw = filtered_results.copy()
+    
     filtered_results = filtered_results.groupby(["MoSS Variant Train", "Quantifier", "m_test"]).agg({
         "MAE": "median",
     }).reset_index()
+    
+    # Apply method filter
+    def apply_method_filter(df):
+        if "None" not in selected_methods:
+            df = df[
+                ~df["Quantifier"].isin([
+                    "DyS","HDy","SORD","SMM","ACC","X_method","MAX","MS","MS2","CC"])]
+            
+        if "QuadaptMoSS_MN" not in selected_methods:
+            df = df[
+                ~df["Quantifier"].str.startswith("QuadaptMoSS_MN", na=False)
+            ]
+            
+        if "QuadaptMoSS" not in selected_methods:
+            df = df[
+                ~(df["Quantifier"].str.startswith("QuadaptMoSS", na=False) & 
+                  ~df["Quantifier"].str.startswith("QuadaptMoSS_MN", na=False))
+            ]
+        return df
+    
+    filtered_results = apply_method_filter(filtered_results)
+    filtered_results_raw = apply_method_filter(filtered_results_raw)
     
     filtered_results = filtered_results.sort_values(by="m_test")
 
@@ -239,5 +258,36 @@ elif page == "Experiments":
         color_discrete_map=color_map,
         markers=True
     )
+    fig_mae.update_yaxes(range=[0, 0.45])
     fig_mae.add_vline(x=selected_m_train, line_width=4, line_dash="dash", line_color="white")
     st.plotly_chart(fig_mae, width='stretch')
+    
+    # Plot 2: Boxplot of methods
+    st.markdown("---")
+    st.subheader("📦 Boxplot Comparison of Methods")
+    
+    # Filter data to only include m_test <= m_train
+    filtered_results_raw = filtered_results_raw[filtered_results_raw["m_test"] <= selected_m_train]
+    
+    # Create method categories for boxplot
+    filtered_results_raw = filtered_results_raw[filtered_results_raw["Quantifier"] != "CC"]
+    
+    filtered_results_raw["Method"] = filtered_results_raw["Quantifier"].apply(
+        lambda x: "None" if x in ["DyS","HDy","SORD","SMM","ACC","X_method","MAX","MS","MS2"]
+        else ("QuadaptMoSS_MN" if x.startswith("QuadaptMoSS_MN")
+              else ("QuadaptMoSS" if x.startswith("QuadaptMoSS") else "Other"))
+    )
+    
+    fig_box = px.box(
+        filtered_results_raw,
+        x="Method",
+        y="MAE",
+        color="Method",
+        color_discrete_map={
+            "None": "#FF6B6B",
+            "QuadaptMoSS": "#50C878",
+            "QuadaptMoSS_MN": "#F5A623"
+        },
+        hover_data=["Quantifier", "m_test", "MoSS Variant Test"]
+    )
+    st.plotly_chart(fig_box, width='stretch')

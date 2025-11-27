@@ -36,14 +36,14 @@ from mlquantify.utils import get_prev_from_labels
 MERGING_FACTORS = np.arange(0.05, 1.0, 0.05) # merging factors
 ALPHAS = [0.1, 0.2, 0.4, 0.6, 0.8, 0.99] # positive class proportions
 MOSS_VARIANTS = {
-    #"MoSS_Dir": MoSS_Dir,
+    "MoSS_Dir": MoSS_Dir,
     "MoSS": MoSS,
     "MoSS_MN": MoSS_MN,
 }
 QuaDaptVariants = { # Variants of MoSS for QuaDapt Framework]
     "MoSS": QuadaptMoSS,
     "MoSS_MN": QuadaptMoSS_MN,
-    #"MoSS_Dir": QuadaptMoSS_Dir,
+    "MoSS_Dir": QuadaptMoSS_Dir,
 }
 QUANTIFIERS = { # Quantifiers for QuaDapt Framework
     "DyS": DyS(),
@@ -78,36 +78,17 @@ QUANTIFIERS = { # Quantifiers for QuaDapt Framework
     "QuadaptMoSS_MN_MS": QuadaptMoSS_MN(MS()),
     "QuadaptMoSS_MN_MS2": QuadaptMoSS_MN(MS2()),
 
-    # "QuadaptMoSS_Dir_DyS": QuadaptMoSS_Dir(DyS()),
-    # "QuadaptMoSS_MN_DyS": QuadaptMoSS_MN(DyS()),
-    # 
-    # "QuadaptMoSS_Dir_HDy": QuadaptMoSS_Dir(HDy()),
-    # "QuadaptMoSS_MN_HDy": QuadaptMoSS_MN(HDy()),
-    # 
-    # "QuadaptMoSS_Dir_SORD": QuadaptMoSS_Dir(SORD()),
-    # "QuadaptMoSS_MN_SORD": QuadaptMoSS_MN(SORD()),
-    # "QuadaptMoSS_SORD": QuadaptMoSS(SORD()),
-    # "QuadaptMoSS_Dir_SMM": QuadaptMoSS_Dir(SMM()),
-    # "QuadaptMoSS_MN_SMM": QuadaptMoSS_MN(SMM()),
-    # "QuadaptMoSS_SMM": QuadaptMoSS(SMM()),
-    # "QuadaptMoSS_Dir_ACC": QuadaptMoSS_Dir(ACC()),
-    # "QuadaptMoSS_MN_ACC": QuadaptMoSS_MN(ACC()),
-    # "QuadaptMoSS_ACC": QuadaptMoSS(ACC()),
-    # "QuadaptMoSS_Dir_X_method": QuadaptMoSS_Dir(X_method()),
-    # "QuadaptMoSS_MN_X_method": QuadaptMoSS_MN(X_method()),
-    # "QuadaptMoSS_X_method": QuadaptMoSS(X_method()),
-    # "QuadaptMoSS_Dir_T50": QuadaptMoSS_Dir(T50()),
-    # "QuadaptMoSS_MN_T50": QuadaptMoSS_MN(T50()),
-    # "QuadaptMoSS_T50": QuadaptMoSS(T50()),
-    # "QuadaptMoSS_Dir_MAX": QuadaptMoSS_Dir(MAX()),
-    # "QuadaptMoSS_MN_MAX": QuadaptMoSS_MN(MAX()),
-    # "QuadaptMoSS_MAX": QuadaptMoSS(MAX()),
-    # "QuadaptMoSS_Dir_MS": QuadaptMoSS_Dir(MS()),
-    # "QuadaptMoSS_MN_MS": QuadaptMoSS_MN(MS()),
-    # "QuadaptMoSS_MS": QuadaptMoSS(MS()),
-    # "QuadaptMoSS_Dir_MS2": QuadaptMoSS_Dir(MS2()),
-    # "QuadaptMoSS_MN_MS2": QuadaptMoSS_MN(MS2()),
-    # "QuadaptMoSS_MS2": QuadaptMoSS(MS2()),
+    "QuadaptMoSS_Dir_DyS": QuadaptMoSS_Dir(DyS()),
+    "QuadaptMoSS_Dir_HDy": QuadaptMoSS_Dir(HDy()),
+    "QuadaptMoSS_Dir_SORD": QuadaptMoSS_Dir(SORD()),
+    "QuadaptMoSS_Dir_SMM": QuadaptMoSS_Dir(SMM()),
+    "QuadaptMoSS_Dir_ACC": QuadaptMoSS_Dir(ACC()),
+    "QuadaptMoSS_Dir_X_method": QuadaptMoSS_Dir(X_method()),
+    #"QuadaptMoSS_Dir_T50": QuaDapt(T50()),
+    "QuadaptMoSS_Dir_MAX": QuadaptMoSS_Dir(MAX()),
+    "QuadaptMoSS_Dir_MS": QuadaptMoSS_Dir(MS()),
+    "QuadaptMoSS_Dir_MS2": QuadaptMoSS_Dir(MS2()),
+
 }
 SIZE_OF_TRAIN = 2000
 SIZE_OF_TEST = 100
@@ -243,16 +224,17 @@ if __name__ == "__main__":
     #for quadapt_variant_name, quadapt in QuaDaptVariants.items():
         #run_experiment_1(quadapt, quadapt_variant_name)
     
-    result = pd.DataFrame()
+
     for moss_variant_name, moss_variant in MOSS_VARIANTS.items():
-        result_ = run_experiment_2(
-            m_train=0.5,
-            moss_variant=moss_variant
-        )
-        result = pd.concat(
-            [
-                result if not result.empty else None, result_
-            ],
-            ignore_index=True)
-    
-    result.to_csv("results2/results_MoSS.csv", index=False)
+        result = pd.DataFrame()
+        for m_train in tqdm(MERGING_FACTORS, colour='green'):
+            result_ = run_experiment_2(
+                m_train=m_train,
+                moss_variant=moss_variant
+            )
+            result = pd.concat(
+                [
+                    result if not result.empty else None, result_
+                ],
+                ignore_index=True)
+        result.to_csv(f"results2/results_{moss_variant_name}.csv", index=False)
