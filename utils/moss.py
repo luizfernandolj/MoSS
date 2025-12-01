@@ -198,9 +198,9 @@ def MoSS(n=1000, alpha=0.5, merging_factor=0.5):
     
     # Construção dos arrays de features (duas colunas iguais)
     moss = np.column_stack(
-        (
+        ( 
             1 - np.concatenate((p_score, n_score)),
-            np.concatenate((p_score, n_score)), 
+            np.concatenate((p_score, n_score)),
             np.int16(np.concatenate((np.ones(len(p_score)), np.full(len(n_score), 0))))
         )
     )

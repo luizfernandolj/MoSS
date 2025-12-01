@@ -1,7 +1,7 @@
 import streamlit as st
 import plotly.express as px
 import numpy as np
-from moss import MoSS_MN, MoSS_Dir, MoSS  # suas funções
+from utils.moss import MoSS_MN, MoSS_Dir, MoSS  # suas funções
 
 
 NUMBER_OF_SAMPLES = 500
@@ -173,24 +173,22 @@ elif page == "Experiments":
     st.markdown("---")
     st.subheader("📊 Detailed Analysis by Quantifier and MoSS Variant")
     
-    result2_moss = pd.read_csv("results2/results_MoSS.csv")
-    #result2_moss_mn = pd.read_csv("results/results_MoSS_MN.csv")
-    #result2_moss_dir = pd.read_csv("results2/results_MoSS_Dir.csv")
-    results = result2_moss #pd.concat([result2_moss, result2_moss_dir], axis=0)
+    results = pd.read_csv("results/results.csv")
     
     # Selector for Quantifier column
-    selected_moss_train_variant_options = results["MoSS Variant Train"].unique()
-    selected_moss_train_variant = st.selectbox("Select MoSS Variant Train:", selected_moss_train_variant_options)
+    selected_moss_train_variant_options = results["MoSS_Train_Variant"].unique()
+    selected_moss_train_variant = st.selectbox("Select MoSS Train Variant:", selected_moss_train_variant_options)
     
-    selected_moss_test_variant_options = results["MoSS Variant Test"].unique()
-    selected_moss_test_variant = st.selectbox("Select MoSS Variant Test:", selected_moss_test_variant_options)
+    selected_moss_test_variant_options = results["MoSS_Test_Variant"].unique()
+    selected_moss_test_variant = st.selectbox("Select MoSS Test Variant:", selected_moss_test_variant_options)
 
     # Range selector for m_train
     m_train_options = sorted(results["m_train"].unique())
     selected_m_train = st.selectbox("Select m_train value:", m_train_options)
+    results["Quadapt_Variant"] = results["Quadapt_Variant"].fillna("None").replace({None: "None"})
 
     # Multi-select for methods to plot
-    method_options = ["None", "QuadaptMoSS", "QuadaptMoSS_MN"]
+    method_options = results["Quadapt_Variant"].unique()
     selected_methods = st.multiselect(
         "Select methods to include in plot:",
         options=method_options,
@@ -199,95 +197,73 @@ elif page == "Experiments":
 
     # Filter data based on selections
     filtered_results = results[
-        (results["MoSS Variant Train"] == selected_moss_train_variant) & 
+        (results["MoSS_Train_Variant"] == selected_moss_train_variant) & 
         (results["m_train"] == selected_m_train) &
-        (results["MoSS Variant Test"] == selected_moss_test_variant)
+        (results["Quadapt_Variant"].isin(selected_methods)) &
+        (results["MoSS_Test_Variant"] == selected_moss_test_variant)
     ]
     
     # Create a copy for boxplot (before aggregation)
     filtered_results_raw = filtered_results.copy()
     
-    filtered_results = filtered_results.groupby(["MoSS Variant Train", "Quantifier", "m_test"]).agg({
-        "MAE": "median",
+    filtered_results = filtered_results.groupby(["MoSS_Train_Variant", "Quadapt_Variant", "Quantifier", "m_test"]).agg({
+        "MAE": "mean",
     }).reset_index()
     
-    # Apply method filter
-    def apply_method_filter(df):
-        if "None" not in selected_methods:
-            df = df[
-                ~df["Quantifier"].isin([
-                    "DyS","HDy","SORD","SMM","ACC","X_method","MAX","MS","MS2","CC"])]
-            
-        if "QuadaptMoSS_MN" not in selected_methods:
-            df = df[
-                ~df["Quantifier"].str.startswith("QuadaptMoSS_MN", na=False)
-            ]
-            
-        if "QuadaptMoSS" not in selected_methods:
-            df = df[
-                ~(df["Quantifier"].str.startswith("QuadaptMoSS", na=False) & 
-                  ~df["Quantifier"].str.startswith("QuadaptMoSS_MN", na=False))
-            ]
-        return df
-    
-    filtered_results = apply_method_filter(filtered_results)
-    filtered_results_raw = apply_method_filter(filtered_results_raw)
     
     filtered_results = filtered_results.sort_values(by="m_test")
-
-    # Plot 1: MAE
-    # Create color mapping
-    color_map = {}
-    for qtf in filtered_results["Quantifier"].unique():
-        if qtf == "CC":
-            color_map[qtf] = "#4A90E2"  # bright blue
-        elif qtf.startswith("QuadaptMoSS_MN"):
-            color_map[qtf] = "#F5A623"  # vibrant orange
-        elif qtf.startswith("QuadaptMoSS"):
-            color_map[qtf] = "#50C878"  # emerald green
-        elif not qtf.startswith("Quadapt"):
-            color_map[qtf] = "#FF6B6B"  # coral red
-        else:
-            color_map[qtf] = "#9B59B6"  # amethyst purple for other Quadapt variants
+    
+    def create_method_label(row):
+        if pd.isna(row["Quadapt_Variant"]) or row["Quadapt_Variant"] == "None" or row["Quadapt_Variant"] is None:
+            return str(row["Quantifier"])
+        return f"{row['Quadapt_Variant']}({row['Quantifier']})"
+    
+    filtered_results["Method"] = filtered_results.apply(create_method_label, axis=1)
+    filtered_results_raw["Method"] = filtered_results_raw.apply(create_method_label, axis=1)
+    
+    # Define color palettes for each Quadapt_Variant (base colors with different shades)
+    quadapt_color_palettes = {
+        "None": ["#1f77b4", "#4a90c2", "#7ab8e0", "#aad4f0", "#d4ebf7"],  # Blues
+        "MoSS": ["#d62728", "#e05a5b", "#eb8c8d", "#f5bfbf", "#fce5e5"],  # Reds
+        "MoSS_MN": ["#2ca02c", "#5cb85c", "#8fd18f", "#bfe5bf", "#e5f5e5"],  # Greens
+        "MoSS_Dir": ["#9467bd", "#b38fd1", "#d1b8e5", "#e8d4f2", "#f5ebf9"],  # Purples
+    }
+    
+    # Define marker symbols for quantifiers
+    marker_symbols = ["circle", "square", "diamond", "cross", "x", "triangle-up", "triangle-down", "star", "hexagon", "pentagon"]
+    
+    # Get unique quantifiers and Quadapt_Variants
+    unique_quantifiers = filtered_results["Quantifier"].unique()
+    unique_quadapt_variants = filtered_results["Quadapt_Variant"].unique()
+    
+    # Create mappings
+    quantifier_to_marker = {q: marker_symbols[i % len(marker_symbols)] for i, q in enumerate(unique_quantifiers)}
+    
+    # Build color map for each Method based on Quadapt_Variant and Quantifier
+    color_discrete_map = {}
+    for qv in unique_quadapt_variants:
+        palette = quadapt_color_palettes.get(qv, quadapt_color_palettes.get("None"))
+        methods_in_qv = filtered_results[filtered_results["Quadapt_Variant"] == qv]["Method"].unique()
+        for i, method in enumerate(methods_in_qv):
+            color_discrete_map[method] = palette[i % len(palette)]
+    
+    # Build symbol map for each Method based on Quantifier
+    symbol_map = {}
+    for _, row in filtered_results[["Method", "Quantifier"]].drop_duplicates().iterrows():
+        symbol_map[row["Method"]] = quantifier_to_marker[row["Quantifier"]]
     
     fig_mae = px.line(
         filtered_results, 
         x="m_test", 
         y="MAE", 
-        color="Quantifier",
-        color_discrete_map=color_map,
-        markers=True
+        color="Method",
+        symbol="Method",
+        markers=True,
+        color_discrete_map=color_discrete_map,
+        symbol_map=symbol_map
     )
+    fig_mae.update_traces(marker=dict(size=10))
     fig_mae.update_yaxes(range=[0, 0.45])
     fig_mae.add_vline(x=selected_m_train, line_width=4, line_dash="dash", line_color="white")
     st.plotly_chart(fig_mae, width='stretch')
-    
-    # Plot 2: Boxplot of methods
-    st.markdown("---")
-    st.subheader("📦 Boxplot Comparison of Methods")
-    
-    # Filter data to only include m_test <= m_train
-    filtered_results_raw = filtered_results_raw[filtered_results_raw["m_test"] <= selected_m_train]
-    
-    # Create method categories for boxplot
-    filtered_results_raw = filtered_results_raw[filtered_results_raw["Quantifier"] != "CC"]
-    
-    filtered_results_raw["Method"] = filtered_results_raw["Quantifier"].apply(
-        lambda x: "None" if x in ["DyS","HDy","SORD","SMM","ACC","X_method","MAX","MS","MS2"]
-        else ("QuadaptMoSS_MN" if x.startswith("QuadaptMoSS_MN")
-              else ("QuadaptMoSS" if x.startswith("QuadaptMoSS") else "Other"))
-    )
-    
-    fig_box = px.box(
-        filtered_results_raw,
-        x="Method",
-        y="MAE",
-        color="Method",
-        color_discrete_map={
-            "None": "#FF6B6B",
-            "QuadaptMoSS": "#50C878",
-            "QuadaptMoSS_MN": "#F5A623"
-        },
-        hover_data=["Quantifier", "m_test", "MoSS Variant Test"]
-    )
-    st.plotly_chart(fig_box, width='stretch')
+

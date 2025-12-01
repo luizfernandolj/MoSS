@@ -1,5 +1,5 @@
 from mlquantify.meta import QuaDapt
-from moss import (MoSS_MN, MoSS_Dir, MoSS)
+from utils.moss import (MoSS_MN, MoSS_Dir, MoSS)
 
 class QuadaptMoSS(QuaDapt):
     
