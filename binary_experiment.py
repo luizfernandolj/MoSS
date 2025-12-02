@@ -1,10 +1,13 @@
+import os
+os.environ["PYTHONWARNINGS"] = "ignore"
+
+import warnings
+warnings.filterwarnings("ignore")
+
 import pandas as pd
-import itertools
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from variables import *
-import warnings
-warnings.filterwarnings('ignore', module='mlquantify')
 
 def run_experiment(m_train,
                    m_test,
@@ -97,6 +100,7 @@ def main(results_path):
             ),
             total=len(param_grid),
             desc="Rodando experimentos",
+            colour="blue"
         )
     )  # [web:46][web:60][web:61]
 
