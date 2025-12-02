@@ -3,7 +3,8 @@ import itertools
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from variables import *
-
+import warnings
+warnings.filterwarnings('ignore', module='mlquantify')
 
 def run_experiment(m_train,
                    m_test,
@@ -42,7 +43,7 @@ def run_experiment(m_train,
                             train_scores,
                             train_labels,
                         )[1]
-                except:
+                except Exception as e:
                     print(f"Error in {qtf_name} with {quadapt_variant_name}: {e}")
 
                 real_prev = get_prev_from_labels(test_labels)[1]
