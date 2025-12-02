@@ -175,7 +175,11 @@ elif page == "Experiments":
     st.subheader("📊 Detailed Analysis by Quantifier and MoSS Variant")
 
     # Carregar resultados
-    results = pd.read_csv("results/results.csv")
+    results1 = pd.read_csv("results/results_part1.csv")
+    results2 = pd.read_csv("results/results_part2.csv")
+    results3 = pd.read_csv("results/results_part3.csv")
+    
+    results = pd.concat([results1, results2, results3])
 
     # Cores e legendas para os cards
     quadapt_color_palettes = {
