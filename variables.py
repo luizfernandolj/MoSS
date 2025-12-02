@@ -62,10 +62,10 @@ QUANTIFIERS = { # Quantifiers for QuaDapt Framework
 }
 
 
-#MERGING_FACTORS = np.arange(0.05, 1.0, 0.05) # merging factors
-#ALPHAS = [0.1, 0.2, 0.4, 0.6, 0.8, 0.99] # positive class proportions
-MERGING_FACTORS = [0.1, 0.5, 0.8, 0.9]
-ALPHAS = [0.25, 0.5, 0.75]
+MERGING_FACTORS = np.arange(0.05, 1.0, 0.05) # merging factors
+ALPHAS = [0.01, 0.1, 0.2, 0.4, 0.6, 0.8, 0.99] # positive class proportions
+#MERGING_FACTORS = [0.1, 0.5, 0.8, 0.9]
+#ALPHAS = [0.25, 0.5, 0.75]
 
 TRAIN_SIZE = 2000
 TEST_SIZE = 100
