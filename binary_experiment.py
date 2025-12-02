@@ -43,14 +43,10 @@ def run_experiment(m_train,
                             train_labels,
                         )[1]
                 except:
-                    import pdb
-                    pdb.set_trace()
+                    print(f"Error in {qtf_name} with {quadapt_variant_name}: {e}")
 
                 real_prev = get_prev_from_labels(test_labels)[1]
                 mae = np.mean(np.abs(prediction - real_prev))
-                if mae > 1:
-                    import pdb
-                    pdb.set_trace()
 
                 results.append({
                     "Quantifier": qtf_name,
