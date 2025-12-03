@@ -297,6 +297,17 @@ elif page == "Experiments":
         default=list(method_options),
     )
 
+    # ===== Novo: seletor de Quantifiers =====
+    quantifier_options = sorted(results["Quantifier"].unique().tolist())
+    selected_quantifiers = st.multiselect(
+        "Select Quantifiers:",
+        options=quantifier_options,
+        default=quantifier_options,  # por padrão, todos
+    )
+    # se o usuário limpar tudo, considera todos
+    if not selected_quantifiers:
+        selected_quantifiers = quantifier_options
+
     # ============================
     # 4) Filtros
     # ============================
@@ -308,6 +319,7 @@ elif page == "Experiments":
         & (results["MoSS_Train_Variant"] == selected_moss_train_variant)
         & (results["MoSS_Test_Variant"] == selected_moss_test_variant)
         & (results["Quadapt_Variant"].isin(selected_methods))
+        & (results["Quantifier"].isin(selected_quantifiers))   # <--- aqui
     ].copy()
 
     mask_train_agg = np.abs(results_agg["m_train"] - selected_m_train) < eps
@@ -316,6 +328,7 @@ elif page == "Experiments":
         & (results_agg["MoSS_Train_Variant"] == selected_moss_train_variant)
         & (results_agg["MoSS_Test_Variant"] == selected_moss_test_variant)
         & (results_agg["Quadapt_Variant"].isin(selected_methods))
+        & (results_agg["Quantifier"].isin(selected_quantifiers))  # <--- e aqui
     ].copy()
 
     # ============================
