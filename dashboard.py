@@ -174,14 +174,66 @@ elif page == "Experiments":
     st.markdown("---")
     st.subheader("📊 Detailed Analysis by Quantifier and MoSS Variant")
 
-    # Carregar resultados
-    results1 = pd.read_csv("results/results_part1.csv")
-    results2 = pd.read_csv("results/results_part2.csv")
-    results3 = pd.read_csv("results/results_part3.csv")
-    
-    results = pd.concat([results1, results2, results3])
+    # ============================
+    # 1) Funções cacheadas
+    # ============================
+    @st.cache_data(show_spinner=True)
+    def load_results():
+        # Se tiver Parquet, use isso (MUITO mais rápido):
+        # df = pd.read_parquet("results/results.parquet")
 
-    # Cores e legendas para os cards
+        # Mantendo CSV por enquanto
+        usecols = [
+            "MoSS_Train_Variant", "MoSS_Test_Variant",
+            "Quadapt_Variant", "Quantifier",
+            "m_train", "m_test", "MAE"
+        ]
+        dtype = {
+            "MoSS_Train_Variant": "category",
+            "MoSS_Test_Variant": "category",
+            "Quadapt_Variant": "category",
+            "Quantifier": "category",
+        }
+        results1 = pd.read_csv("results/results_part1.csv", usecols=usecols, dtype=dtype)
+        results2 = pd.read_csv("results/results_part2.csv", usecols=usecols, dtype=dtype)
+        results3 = pd.read_csv("results/results_part3.csv", usecols=usecols, dtype=dtype)
+        results = pd.concat([results1, results2, results3], ignore_index=True)
+
+        # Corrige NaNs de Quadapt_Variant uma vez só
+        results["Quadapt_Variant"] = (
+            results["Quadapt_Variant"]
+            .astype("string")
+            .fillna("None")
+            .replace({None: "None"})
+            .astype("category")
+        )
+        return results
+
+    @st.cache_data(show_spinner=True)
+    def pre_aggregate(results: pd.DataFrame):
+        """
+        Pré-agrega MAE por chaves estáveis (sem depender de m_train).
+        Assim, o lineplot não precisa dar groupby toda vez.
+        """
+        agg = (
+            results
+            .groupby(
+                ["MoSS_Train_Variant", "MoSS_Test_Variant",
+                 "Quadapt_Variant", "Quantifier", "m_test"],
+                observed=True
+            )["MAE"]
+            .mean()
+            .reset_index()
+        )
+        agg = agg.sort_values("m_test")
+        return agg
+
+    results = load_results()
+    results_agg = pre_aggregate(results)
+
+    # ============================
+    # 2) Cores e legendas
+    # ============================
     quadapt_color_palettes = {
         "None": ["#1f77b4", "#4a90c2", "#7ab8e0", "#aad4f0", "#d4ebf7"],  # Blues
         "MoSS": ["#d62728", "#e05a5b", "#eb8c8d", "#f5bfbf", "#fce5e5"],  # Reds
@@ -208,121 +260,161 @@ elif page == "Experiments":
                 unsafe_allow_html=True,
             )
 
-    # Selectboxes com padrão "MoSS"
-    selected_moss_train_variant_options = results["MoSS_Train_Variant"].unique()
+    # ============================
+    # 3) Widgets mais baratos
+    # ============================
+    moss_train_opts = sorted(results["MoSS_Train_Variant"].unique().tolist())
     selected_moss_train_variant = st.selectbox(
         "Select MoSS Train Variant:",
-        selected_moss_train_variant_options,
-        index=int(np.where(selected_moss_train_variant_options == "MoSS")[0][0])
+        moss_train_opts,
+        index=moss_train_opts.index("MoSS") if "MoSS" in moss_train_opts else 0,
     )
 
-    selected_moss_test_variant_options = results["MoSS_Test_Variant"].unique()
+    moss_test_opts = sorted(results["MoSS_Test_Variant"].unique().tolist())
     selected_moss_test_variant = st.selectbox(
         "Select MoSS Test Variant:",
-        selected_moss_test_variant_options,
-        index=int(np.where(selected_moss_test_variant_options == "MoSS")[0][0])
+        moss_test_opts,
+        index=moss_test_opts.index("MoSS") if "MoSS" in moss_test_opts else 0,
     )
 
-    # RangeSlider para m_train
-    m_train_options = sorted(results["m_train"].unique())
-    min_train, max_train = min(m_train_options), max(m_train_options)
-    # Localiza o valor mais próximo de 0.5 nas opções
-    half_idx = np.argmin(np.abs(np.array(m_train_options) - 0.5))
-    default_val = m_train_options[half_idx]
+    m_train_options = np.sort(results["m_train"].unique())
+    min_train, max_train = float(m_train_options.min()), float(m_train_options.max())
+    half_idx = int(np.argmin(np.abs(m_train_options - 0.5)))
+    default_val = float(m_train_options[half_idx])
+
     selected_m_train = st.slider(
         "Select m_train:",
-        min_value=float(min_train),
-        max_value=float(max_train),
-        value=float(default_val),
-        step=float(m_train_options[1]-m_train_options[0])
+        min_value=min_train,
+        max_value=max_train,
+        value=default_val,
+        step=float(m_train_options[1] - m_train_options[0]) if len(m_train_options) > 1 else 0.1,
     )
 
-    # Corrige possíveis NaNs
-    results["Quadapt_Variant"] = results["Quadapt_Variant"].fillna("None").replace({None: "None"})
-
-    # Multi-select para métodos
-    method_options = results["Quadapt_Variant"].unique()
+    method_options = results["Quadapt_Variant"].cat.categories.tolist()
     selected_methods = st.multiselect(
         "Select methods to include in plot:",
         options=method_options,
-        default=list(method_options)
+        default=list(method_options),
     )
 
-    # Filtro usando o range
-    filtered_results = results[
-        (results["MoSS_Train_Variant"] == selected_moss_train_variant) & 
-        (results["m_train"] >= selected_m_train) &
-        (results["m_train"] <= selected_m_train) &
-        (results["Quadapt_Variant"].isin(selected_methods)) &
-        (results["MoSS_Test_Variant"] == selected_moss_test_variant)
-    ]
-    filtered_results_raw = filtered_results.copy()
+    # ============================
+    # 4) Filtro leve + pré-agregação
+    # ============================
+    # m_train está sendo usado como um único valor -> use igualdade
+    # Para evitar issues de float, arredonde/normalize
+    eps = 1e-9
+    mask_train = np.abs(results["m_train"] - selected_m_train) < eps
 
-    # Aggregação como no código original
-    filtered_results = filtered_results.groupby(
-        ["MoSS_Train_Variant", "Quadapt_Variant", "Quantifier", "m_test"]
-    ).agg({
-        "MAE": "mean",
-    }).reset_index()
-    filtered_results = filtered_results.sort_values(by="m_test")
+    filtered_results_raw = results[
+        mask_train
+        & (results["MoSS_Train_Variant"] == selected_moss_train_variant)
+        & (results["MoSS_Test_Variant"] == selected_moss_test_variant)
+        & (results["Quadapt_Variant"].isin(selected_methods))
+    ].copy()
+
+    # A linha abaixo usa a pré-agregação (results_agg) + filtros leves
+    filtered_results = results_agg[
+        (results_agg["MoSS_Train_Variant"] == selected_moss_train_variant)
+        & (results_agg["MoSS_Test_Variant"] == selected_moss_test_variant)
+        & (results_agg["Quadapt_Variant"].isin(selected_methods))
+    ].copy()
 
     def create_method_label(row):
-        if pd.isna(row["Quadapt_Variant"]) or row["Quadapt_Variant"] == "None" or row["Quadapt_Variant"] is None:
+        if pd.isna(row["Quadapt_Variant"]) or row["Quadapt_Variant"] == "None":
             return str(row["Quantifier"])
         return f"{row['Quadapt_Variant']}({row['Quantifier']})"
 
     filtered_results["Method"] = filtered_results.apply(create_method_label, axis=1)
     filtered_results_raw["Method"] = filtered_results_raw.apply(create_method_label, axis=1)
 
-    # Cores e símbolos por método
-    marker_symbols = ["circle", "square", "diamond", "cross", "x", "triangle-up", "triangle-down", "star", "hexagon", "pentagon"]
-    unique_quantifiers = filtered_results["Quantifier"].unique()
-    unique_quadapt_variants = filtered_results["Quadapt_Variant"].unique()
-    quantifier_to_marker = {q: marker_symbols[i % len(marker_symbols)] for i, q in enumerate(unique_quantifiers)}
+    # ============================
+    # 5) Downsampling (opcional, mas ajuda muito)
+    # ============================
+    # Se houver muitos pontos por método, reduza:
+    max_points_per_method = 1000  # ajuste se precisar
+
+    def downsample(df, key_col="Method", x_col="m_test"):
+        out = []
+        for m in df[key_col].unique():
+            sub = df[df[key_col] == m]
+            if len(sub) > max_points_per_method:
+                # sample uniforme no eixo x
+                sub = sub.sort_values(x_col).iloc[
+                    np.linspace(0, len(sub) - 1, max_points_per_method).astype(int)
+                ]
+            out.append(sub)
+        return pd.concat(out, ignore_index=True)
+
+    filtered_results_ds = downsample(filtered_results)
+
+    # ============================
+    # 6) Cores e símbolos
+    # ============================
+    marker_symbols = [
+        "circle", "square", "diamond", "cross", "x",
+        "triangle-up", "triangle-down", "star", "hexagon", "pentagon"
+    ]
+    unique_quantifiers = filtered_results_ds["Quantifier"].unique()
+    unique_quadapt_variants = filtered_results_ds["Quadapt_Variant"].unique()
+    quantifier_to_marker = {
+        q: marker_symbols[i % len(marker_symbols)]
+        for i, q in enumerate(unique_quantifiers)
+    }
 
     color_discrete_map = {}
     for qv in unique_quadapt_variants:
-        palette = quadapt_color_palettes.get(qv, quadapt_color_palettes.get("None"))
-        methods_in_qv = filtered_results[filtered_results["Quadapt_Variant"] == qv]["Method"].unique()
+        palette = quadapt_color_palettes.get(qv, quadapt_color_palettes["None"])
+        methods_in_qv = filtered_results_ds[filtered_results_ds["Quadapt_Variant"] == qv]["Method"].unique()
         for i, method in enumerate(methods_in_qv):
             color_discrete_map[method] = palette[i % len(palette)]
 
     symbol_map = {}
-    for _, row in filtered_results[["Method", "Quantifier"]].drop_duplicates().iterrows():
+    for _, row in filtered_results_ds[["Method", "Quantifier"]].drop_duplicates().iterrows():
         symbol_map[row["Method"]] = quantifier_to_marker[row["Quantifier"]]
 
-    # Lineplot
+    # ============================
+    # 7) Gráficos
+    # ============================
     fig_mae = px.line(
-        filtered_results, 
-        x="m_test", 
-        y="MAE", 
+        filtered_results_ds,
+        x="m_test",
+        y="MAE",
         color="Method",
         symbol="Method",
         markers=True,
         color_discrete_map=color_discrete_map,
-        symbol_map=symbol_map
+        symbol_map=symbol_map,
     )
     fig_mae.update_traces(marker=dict(size=10))
     fig_mae.update_yaxes(range=[0, 0.45])
-    # Marcação do range selecionado
-    fig_mae.add_vline(x=selected_m_train, line_dash="dot", line_color="white", line_width=5, opacity=0.8)
+    fig_mae.add_vline(
+        x=selected_m_train,
+        line_dash="dot",
+        line_color="white",
+        line_width=5,
+        opacity=0.8,
+    )
     st.plotly_chart(fig_mae, use_container_width=True)
 
-    # Boxplot por Quadapt Variant após o lineplot
-    # Filtrar m_test <= m_train selecionado
+    # Boxplot (usa raw filtrado em m_test <= m_train)
     filtered_for_box = filtered_results_raw[filtered_results_raw["m_test"] <= selected_m_train]
-    
+
     fig_box = px.box(
         filtered_for_box,
         x="Quadapt_Variant",
         y="MAE",
         color="Quadapt_Variant",
-        points="all",
-        color_discrete_map={k: v[0] for k, v in quadapt_color_palettes.items()}
+        color_discrete_map={k: v[0] for k, v in quadapt_color_palettes.items()},
     )
+    fig_box.update_yaxes(range=[0, 0.65])
     st.plotly_chart(fig_box, use_container_width=True)
 
-    # Explicação das cores
-    st.info("As cores e suas tonalidades indicam os diferentes métodos ('Quadapt_Variant') e variantes de quantificadores. Cada cor representa uma categoria de método; as tonalidades diferenciam os quantificadores utilizados dentro de cada método. Veja os cartões acima para detalhes.")
+    st.info(
+        "As cores e suas tonalidades indicam os diferentes métodos ('Quadapt_Variant') "
+        "e variantes de quantificadores. Cada cor representa uma categoria de método; "
+        "as tonalidades diferenciam os quantificadores utilizados dentro de cada método. "
+        "Veja os cartões acima para detalhes."
+    )
+
 
 
