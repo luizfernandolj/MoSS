@@ -179,10 +179,6 @@ elif page == "Experiments":
     # ============================
     @st.cache_data(show_spinner=True)
     def load_results():
-        # Se tiver Parquet, use isso (MUITO mais rápido):
-        # df = pd.read_parquet("results/results.parquet")
-
-        # Mantendo CSV por enquanto
         usecols = [
             "MoSS_Train_Variant", "MoSS_Test_Variant",
             "Quadapt_Variant", "Quantifier",
@@ -194,10 +190,19 @@ elif page == "Experiments":
             "Quadapt_Variant": "category",
             "Quantifier": "category",
         }
+
         results1 = pd.read_csv("results/results_part1.csv", usecols=usecols, dtype=dtype)
         results2 = pd.read_csv("results/results_part2.csv", usecols=usecols, dtype=dtype)
         results3 = pd.read_csv("results/results_part3.csv", usecols=usecols, dtype=dtype)
+
         results = pd.concat([results1, results2, results3], ignore_index=True)
+
+        # Remove apenas T50
+        results = results[results["Quantifier"] != "T50"]
+
+        # Garantir tipos categóricos
+        for col in ["MoSS_Train_Variant", "MoSS_Test_Variant", "Quadapt_Variant", "Quantifier"]:
+            results[col] = results[col].astype("category")
 
         # Corrige NaNs de Quadapt_Variant uma vez só
         results["Quadapt_Variant"] = (
@@ -211,21 +216,17 @@ elif page == "Experiments":
 
     @st.cache_data(show_spinner=True)
     def pre_aggregate(results: pd.DataFrame):
-        """
-        Pré-agrega MAE por chaves estáveis (sem depender de m_train).
-        Assim, o lineplot não precisa dar groupby toda vez.
-        """
         agg = (
             results
             .groupby(
-                ["MoSS_Train_Variant", "MoSS_Test_Variant",
+                ["m_train", "MoSS_Train_Variant", "MoSS_Test_Variant",
                  "Quadapt_Variant", "Quantifier", "m_test"],
                 observed=True
             )["MAE"]
             .mean()
             .reset_index()
         )
-        agg = agg.sort_values("m_test")
+        agg = agg.sort_values(["m_train", "m_test"])
         return agg
 
     results = load_results()
@@ -248,7 +249,6 @@ elif page == "Experiments":
         "MoSS_Dir": "Quadapt_Variant: MoSS_Dir (roxo)",
     }
 
-    # Cartões de explicação
     st.markdown("### Método (Quadapt_Variant) e Cores")
     cols = st.columns(4)
     for i, (k, v) in enumerate(quadapt_color_palettes.items()):
@@ -261,7 +261,7 @@ elif page == "Experiments":
             )
 
     # ============================
-    # 3) Widgets mais baratos
+    # 3) Widgets
     # ============================
     moss_train_opts = sorted(results["MoSS_Train_Variant"].unique().tolist())
     selected_moss_train_variant = st.selectbox(
@@ -290,7 +290,7 @@ elif page == "Experiments":
         step=float(m_train_options[1] - m_train_options[0]) if len(m_train_options) > 1 else 0.1,
     )
 
-    method_options = results["Quadapt_Variant"].cat.categories.tolist()
+    method_options = sorted(results["Quadapt_Variant"].unique().tolist())
     selected_methods = st.multiselect(
         "Select methods to include in plot:",
         options=method_options,
@@ -298,10 +298,8 @@ elif page == "Experiments":
     )
 
     # ============================
-    # 4) Filtro leve + pré-agregação
+    # 4) Filtros
     # ============================
-    # m_train está sendo usado como um único valor -> use igualdade
-    # Para evitar issues de float, arredonde/normalize
     eps = 1e-9
     mask_train = np.abs(results["m_train"] - selected_m_train) < eps
 
@@ -312,12 +310,25 @@ elif page == "Experiments":
         & (results["Quadapt_Variant"].isin(selected_methods))
     ].copy()
 
-    # A linha abaixo usa a pré-agregação (results_agg) + filtros leves
+    mask_train_agg = np.abs(results_agg["m_train"] - selected_m_train) < eps
     filtered_results = results_agg[
-        (results_agg["MoSS_Train_Variant"] == selected_moss_train_variant)
+        mask_train_agg
+        & (results_agg["MoSS_Train_Variant"] == selected_moss_train_variant)
         & (results_agg["MoSS_Test_Variant"] == selected_moss_test_variant)
         & (results_agg["Quadapt_Variant"].isin(selected_methods))
     ].copy()
+
+    # ============================
+    # 4.1) Separar CC em uma linha única
+    # ============================
+    # Dados do CC (de qualquer Quadapt_Variant)
+    cc_df = filtered_results[filtered_results["Quantifier"] == "CC"].copy()
+    # Mantém só uma "versão" de CC: por exemplo, Quadapt_Variant == "None"
+    if not cc_df.empty:
+        cc_df = cc_df[cc_df["Quadapt_Variant"] == "None"].copy()
+
+    # Remove CC do dataframe principal para não duplicar
+    filtered_results = filtered_results[filtered_results["Quantifier"] != "CC"].copy()
 
     def create_method_label(row):
         if pd.isna(row["Quadapt_Variant"]) or row["Quadapt_Variant"] == "None":
@@ -327,18 +338,22 @@ elif page == "Experiments":
     filtered_results["Method"] = filtered_results.apply(create_method_label, axis=1)
     filtered_results_raw["Method"] = filtered_results_raw.apply(create_method_label, axis=1)
 
+    if not cc_df.empty:
+        # rótulo único para CC
+        cc_df["Method"] = "CC (baseline)"
+
     # ============================
-    # 5) Downsampling (opcional, mas ajuda muito)
+    # 5) Downsampling opcional
     # ============================
-    # Se houver muitos pontos por método, reduza:
-    max_points_per_method = 1000  # ajuste se precisar
+    max_points_per_method = 500
 
     def downsample(df, key_col="Method", x_col="m_test"):
+        if df.empty:
+            return df
         out = []
         for m in df[key_col].unique():
             sub = df[df[key_col] == m]
             if len(sub) > max_points_per_method:
-                # sample uniforme no eixo x
                 sub = sub.sort_values(x_col).iloc[
                     np.linspace(0, len(sub) - 1, max_points_per_method).astype(int)
                 ]
@@ -354,8 +369,8 @@ elif page == "Experiments":
         "circle", "square", "diamond", "cross", "x",
         "triangle-up", "triangle-down", "star", "hexagon", "pentagon"
     ]
-    unique_quantifiers = filtered_results_ds["Quantifier"].unique()
-    unique_quadapt_variants = filtered_results_ds["Quadapt_Variant"].unique()
+    unique_quantifiers = filtered_results_ds["Quantifier"].unique() if not filtered_results_ds.empty else []
+    unique_quadapt_variants = filtered_results_ds["Quadapt_Variant"].unique() if not filtered_results_ds.empty else []
     quantifier_to_marker = {
         q: marker_symbols[i % len(marker_symbols)]
         for i, q in enumerate(unique_quantifiers)
@@ -369,45 +384,71 @@ elif page == "Experiments":
             color_discrete_map[method] = palette[i % len(palette)]
 
     symbol_map = {}
-    for _, row in filtered_results_ds[["Method", "Quantifier"]].drop_duplicates().iterrows():
-        symbol_map[row["Method"]] = quantifier_to_marker[row["Quantifier"]]
+    if not filtered_results_ds.empty:
+        for _, row in filtered_results_ds[["Method", "Quantifier"]].drop_duplicates().iterrows():
+            symbol_map[row["Method"]] = quantifier_to_marker[row["Quantifier"]]
 
     # ============================
     # 7) Gráficos
     # ============================
-    fig_mae = px.line(
-        filtered_results_ds,
-        x="m_test",
-        y="MAE",
-        color="Method",
-        symbol="Method",
-        markers=True,
-        color_discrete_map=color_discrete_map,
-        symbol_map=symbol_map,
-    )
-    fig_mae.update_traces(marker=dict(size=10))
-    fig_mae.update_yaxes(range=[0, 0.45])
-    fig_mae.add_vline(
-        x=selected_m_train,
-        line_dash="dot",
-        line_color="white",
-        line_width=5,
-        opacity=0.8,
-    )
-    st.plotly_chart(fig_mae, use_container_width=True)
+    if not filtered_results_ds.empty or (cc_df is not None and not cc_df.empty):
+        # figura base com os métodos normais
+        if not filtered_results_ds.empty:
+            fig_mae = px.line(
+                filtered_results_ds,
+                x="m_test",
+                y="MAE",
+                color="Method",
+                symbol="Method",
+                markers=True,
+                color_discrete_map=color_discrete_map,
+                symbol_map=symbol_map,
+            )
+        else:
+            fig_mae = go.Figure()
 
-    # Boxplot (usa raw filtrado em m_test <= m_train)
+        # Linha especial para CC: cor fixa e grossa
+        if cc_df is not None and not cc_df.empty:
+            cc_trace = go.Scatter(
+                x=cc_df["m_test"],
+                y=cc_df["MAE"],
+                mode="lines+markers",
+                name="CC (baseline)",          # aparece na legenda
+                line=dict(color="#FF7F0E",     # laranja forte
+                          width=6),            # linha bem grossa
+                marker=dict(size=11,
+                            symbol="circle",
+                            color="#FF7F0E",
+                            line=dict(color="black", width=1)),
+                showlegend=True
+            )
+            fig_mae.add_trace(cc_trace)
+
+        fig_mae.update_traces(marker=dict(size=10))
+        fig_mae.update_yaxes(range=[0, 0.45])
+        fig_mae.add_vline(
+            x=selected_m_train,
+            line_dash="dot",
+            line_color="white",
+            line_width=5,
+            opacity=0.8,
+        )
+        st.plotly_chart(fig_mae, width="stretch")
+    else:
+        st.warning("No data for the selected filters.")
+
     filtered_for_box = filtered_results_raw[filtered_results_raw["m_test"] <= selected_m_train]
 
-    fig_box = px.box(
-        filtered_for_box,
-        x="Quadapt_Variant",
-        y="MAE",
-        color="Quadapt_Variant",
-        color_discrete_map={k: v[0] for k, v in quadapt_color_palettes.items()},
-    )
-    fig_box.update_yaxes(range=[0, 0.65])
-    st.plotly_chart(fig_box, use_container_width=True)
+    if not filtered_for_box.empty:
+        fig_box = px.box(
+            filtered_for_box,
+            x="Quadapt_Variant",
+            y="MAE",
+            color="Quadapt_Variant",
+            color_discrete_map={k: v[0] for k, v in quadapt_color_palettes.items()},
+        )
+        fig_box.update_yaxes(range=[0, 0.65])
+        st.plotly_chart(fig_box, width="stretch")
 
     st.info(
         "As cores e suas tonalidades indicam os diferentes métodos ('Quadapt_Variant') "
@@ -415,6 +456,3 @@ elif page == "Experiments":
         "as tonalidades diferenciam os quantificadores utilizados dentro de cada método. "
         "Veja os cartões acima para detalhes."
     )
-
-
-
