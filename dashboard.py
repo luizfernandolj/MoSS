@@ -184,6 +184,9 @@ elif page == "Experiments":
             "Quadapt_Variant", "Quantifier",
             "m_train", "m_test", "MAE"
         ]
+        cols_jp = [
+            "m_train", "m_test", "real", "pred", "MAE", "dist", "Quantifier"
+        ]
         dtype = {
             "MoSS_Train_Variant": "category",
             "MoSS_Test_Variant": "category",
@@ -191,14 +194,31 @@ elif page == "Experiments":
             "Quantifier": "category",
         }
 
+        results_jp = pd.read_csv("results/results_jp.csv")
+        results_jp.columns = cols_jp
+        results_jp.drop(["real", "pred", "dist"], inplace=True, axis=1)
+        results_jp["MoSS_Train_Variant"] = "MoSS"
+        results_jp["MoSS_Test_Variant"] = "MoSS"
+        results_jp["Quadapt_Variant"] = results_jp["Quantifier"].apply(
+            lambda x: "MoSS_JP" if x.endswith("Syn-TS") or x.endswith("Syn") else "None_JP"
+        )
+        results_jp["Quantifier"] = results_jp["Quantifier"].str.replace("Syn-TS", "", regex=False)
+        results_jp["Quantifier"] = results_jp["Quantifier"].str.replace("Syn", "", regex=False)
+        results_jp["Quantifier"] = results_jp["Quantifier"].str.replace("X", "X_method", regex=False)
+        results_jp["Quantifier"] = results_jp["Quantifier"].str.replace("-TS", "", regex=False)
+        results_jp["Quantifier"] = results_jp["Quantifier"].str.replace("MAX_method", "MAX", regex=False)
+        results_jp["Quantifier"] = results_jp["Quantifier"].str.replace("Dy", "DyS", regex=False)
+        results_jp["Quantifier"] = results_jp["Quantifier"].str.replace("DySS", "DyS", regex=False)
+        results_jp["Quantifier"] = results_jp["Quantifier"].str.replace("HDyS", "HDy", regex=False)
+        
         results1 = pd.read_csv("results/results_part1.csv", usecols=usecols, dtype=dtype)
         results2 = pd.read_csv("results/results_part2.csv", usecols=usecols, dtype=dtype)
         results3 = pd.read_csv("results/results_part3.csv", usecols=usecols, dtype=dtype)
 
-        results = pd.concat([results1, results2, results3], ignore_index=True)
+        results = pd.concat([results1, results2, results3, results_jp], ignore_index=True)
 
         # Remove apenas T50
-        results = results[results["Quantifier"] != "T50"]
+        results = results[~results["Quantifier"].isin(["T50", "PACC", "PCC"])]
 
         # Garantir tipos categóricos
         for col in ["MoSS_Train_Variant", "MoSS_Test_Variant", "Quadapt_Variant", "Quantifier"]:
@@ -236,10 +256,12 @@ elif page == "Experiments":
     # 2) Cores e legendas
     # ============================
     quadapt_color_palettes = {
-        "None": ["#1f77b4", "#4a90c2", "#7ab8e0", "#aad4f0", "#d4ebf7"],  # Blues
-        "MoSS": ["#d62728", "#e05a5b", "#eb8c8d", "#f5bfbf", "#fce5e5"],  # Reds
-        "MoSS_MN": ["#2ca02c", "#5cb85c", "#8fd18f", "#bfe5bf", "#e5f5e5"],  # Greens
-        "MoSS_Dir": ["#9467bd", "#b38fd1", "#d1b8e5", "#e8d4f2", "#f5ebf9"],  # Purples
+        "None": ["#0000FF", "#4169E1", "#1E90FF", "#00BFFF", "#87CEEB"],  # Blues - mais vibrantes
+        "MoSS": ["#FF0000", "#DC143C", "#FF1493", "#FF69B4", "#FFB6C1"],  # Reds/Pinks - mais contrastantes
+        "MoSS_MN": ["#00FF00", "#32CD32", "#00FA9A", "#90EE90", "#98FB98"],  # Greens - mais saturados
+        "MoSS_Dir": ["#8B00FF", "#9400D3", "#BA55D3", "#DA70D6", "#EE82EE"],  # Purples - mais intensos
+        "None_JP": ["#FF8C00", "#FFA500", "#FFD700", "#FFFF00", "#FFFFE0"],  # Oranges/Yellows - mais brilhantes
+        "MoSS_JP": ["#8B4513", "#D2691E", "#CD853F", "#DEB887", "#F5DEB3"],  # Browns - mais distintos
     }
 
     legend_text = {
@@ -247,10 +269,12 @@ elif page == "Experiments":
         "MoSS": "Quadapt_Variant: MoSS (vermelho)",
         "MoSS_MN": "Quadapt_Variant: MoSS_MN (verde)",
         "MoSS_Dir": "Quadapt_Variant: MoSS_Dir (roxo)",
+        "None_JP": "Quadapt_Variant: None_JP (laranja)",
+        "MoSS_JP": "Quadapt_Variant: MoSS_JP (marrom)",
     }
 
     st.markdown("### Método (Quadapt_Variant) e Cores")
-    cols = st.columns(4)
+    cols = st.columns(6)
     for i, (k, v) in enumerate(quadapt_color_palettes.items()):
         with cols[i]:
             st.markdown(
