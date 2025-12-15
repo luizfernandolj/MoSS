@@ -94,7 +94,7 @@ def main(results_path):
     dfs = list(
         tqdm(
             Parallel(
-                n_jobs=-1,
+                n_jobs=16,
                 backend="loky",          # padrão recomendado para CPU-bound + sklearn [web:46][web:49]
                 return_as="generator",   # permite usar tqdm em cima do gerador [web:61][web:60]
             )(
