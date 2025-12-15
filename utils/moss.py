@@ -118,9 +118,9 @@ def MoSS_Dir(
     Retorna
     -------
     X : np.ndarray
-        Scores dentro do simplex (n × n_classes)
+        Scores dentro do simplex (n_samples < n_classes)
     y : np.ndarray
-        Rótulos de classe (n,)
+        Rótulos de classe (n_samples,)
     """
     merging_factor = np.clip(merging_factor, 0.1, 1.0)
 
@@ -142,13 +142,14 @@ def MoSS_Dir(
         m_c = np.clip(m_c, 0.0, 1.0)
 
         # Controle de concentração
-        high_conc = 10 if m_c < 0.5 else 3
+        m_c = 0.5 * m_c + 0.5
+        high_conc = 100 ** m_c
 
         # Mistura entre centróide puro e distribuição uniforme
         center = centers[c]
-        mean = center * (1 - m_c) + (m_c / n_classes)
+        mean = center * (1 - m_c)
         
-                        # concentra mais                       # mais uniforme
+        # concentra mais                       # mais uniforme
         concentration = (1 - m_c) * (mean * high_conc) + m_c * np.ones(n_classes)
 
         # Geração Dirichlet

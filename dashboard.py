@@ -218,7 +218,7 @@ elif page == "Experiments":
         results = pd.concat([results1, results2, results3, results_jp], ignore_index=True)
 
         # Remove apenas T50
-        results = results[~results["Quantifier"].isin(["T50", "PACC", "PCC"])]
+        results = results[~results["Quantifier"].isin(["PACC", "PCC"])]
 
         # Garantir tipos categóricos
         for col in ["MoSS_Train_Variant", "MoSS_Test_Variant", "Quadapt_Variant", "Quantifier"]:

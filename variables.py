@@ -42,9 +42,10 @@ MOSS_VARIANTS = {
     "MoSS_MN": MoSS_MN,
 }
 QUADAPT_VARIANTS = { # Variants of MoSS for QuaDapt Framework]
-    "MoSS": QuadaptMoSS,
-    "MoSS_MN": QuadaptMoSS_MN,
-    "MoSS_Dir": QuadaptMoSS_Dir,
+    "Quadapt_MoSS": QuadaptMoSS,
+    "Quadapt_MvN": QuadaptMoSS_MN,
+    "Quadapt_Dir": QuadaptMoSS_Dir,
+    "QuadaptNew": QuadaptNew,
     "None": None
 }
 QUANTIFIERS = { # Quantifiers for QuaDapt Framework
