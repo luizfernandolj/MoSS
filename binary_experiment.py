@@ -34,22 +34,22 @@ def run_experiment(m_train,
 
         for quadapt_variant_name, quadapt_variant in QUADAPT_VARIANTS.items():
             for qtf_name, quantifier in QUANTIFIERS.items():
-                # try:
-                if qtf_name == "CC":
-                    prediction = quantifier().aggregate(test_scores)[1]
-                elif quadapt_variant_name != "None":
-                    prediction = quadapt_variant(quantifier()).aggregate(test_scores, 
-                                                                            [0, 1])
-                    prediction = list(prediction.values())[1]
-                else:
-                    prediction = quantifier().aggregate(
-                        test_scores,
-                        train_scores,
-                        train_labels,
-                    )
-                    prediction = list(prediction.values())[1]
-                # except Exception as e:
-                    # print(f"Error in {qtf_name} with {quadapt_variant_name}: {e}")
+                try:
+                    if qtf_name == "CC":
+                        prediction = quantifier().aggregate(test_scores)[1]
+                    elif quadapt_variant_name != "None":
+                        prediction = quadapt_variant(quantifier()).aggregate(test_scores, 
+                                                                                [0, 1])
+                        prediction = list(prediction.values())[1]
+                    else:
+                        prediction = quantifier().aggregate(
+                            test_scores,
+                            train_scores,
+                            train_labels,
+                        )
+                        prediction = list(prediction.values())[1]
+                except Exception as e:
+                    print(f"Error in {qtf_name} with {quadapt_variant_name}: {e}")
 
                 real_prev = get_prev_from_labels(test_labels)
                 real_prev = list(real_prev.values())[1]
