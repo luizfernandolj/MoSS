@@ -12,7 +12,8 @@ from utils.moss import (
 from utils.quadapt_variant import (
     QuadaptMoSS,
     QuadaptMoSS_MN,
-    QuadaptMoSS_Dir
+    QuadaptMoSS_Dir,
+    QuadaptNew
 )
 from mlquantify.adjust_counting import (
     ACC,

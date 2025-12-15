@@ -1,33 +1,34 @@
 from mlquantify.meta import QuaDapt
+from mlquantify.utils._validation import validate_prevalences
 from utils.moss import (MoSS_MN, MoSS_Dir, MoSS)
+import numpy as np
 
 class QuadaptMoSS(QuaDapt):
     
     @classmethod
-    def MoSS(cls, n, alpha, m):
-        return MoSS(n=n, alpha=alpha, merging_factor=m)
+    def MoSS(cls, n, alpha, merging_factor):
+        return MoSS(n=n, alpha=alpha, merging_factor=merging_factor)
 
 
 class QuadaptMoSS_MN(QuaDapt):
     
     @classmethod
-    def MoSS(cls, n, alpha, m):
+    def MoSS(cls, n, alpha, merging_factor):
         
         if isinstance(alpha, (float, int)):
             alpha = [1-alpha, alpha]
-            
         return MoSS_MN(
             n=n, 
             n_classes=len(alpha), 
             alpha=alpha,
-            merging_factor=m
+            merging_factor=merging_factor
         )
         
     
 class QuadaptMoSS_Dir(QuaDapt):
     
     @classmethod
-    def MoSS(cls, n, alpha, m):
+    def MoSS(cls, n, alpha, merging_factor):
         
         if isinstance(alpha, (float, int)):
             alpha = [1-alpha, alpha]
@@ -36,10 +37,26 @@ class QuadaptMoSS_Dir(QuaDapt):
             n=n, 
             n_classes=len(alpha), 
             alpha=alpha, 
-            merging_factor=m
+            merging_factor=merging_factor
         )
 
 
+
+
+class QuadaptMoSS_Dir(QuaDapt):
+    
+    @classmethod
+    def MoSS(cls, n, alpha, merging_factor):
+        
+        if isinstance(alpha, (float, int)):
+            alpha = [1-alpha, alpha]
+            
+        return MoSS_Dir(
+            n=n, 
+            n_classes=len(alpha), 
+            alpha=alpha, 
+            merging_factor=merging_factor
+        )
 
 
 class QuadaptNew(QuaDapt):
@@ -51,21 +68,18 @@ class QuadaptNew(QuaDapt):
         self.classes = self.classes if hasattr(self, 'classes') else np.unique(train_y_values)
 
         distances = []
+        alphas = []
 
         for Moss_Variant in self.MOSS_VARIANTS:
             self.MoSS = Moss_Variant
             
-            distance = self.get_best_distance(predictions)
+            alpha, distance, _ = self.best_mixture(predictions)
             distances.append(distance)
+            alphas.append(alpha)
 
-        moss = self.MOSS_VARIANTS[np.argmin(distances)]
-        self.MoSS = moss
+        prevalence = alphas[np.argmin(distances)]
+        prevalences = np.asarray([1-prevalence, prevalence])
 
-        moss_scores, moss_labels = self.MoSS(1000, 0.5, m)
+        prevalences = validate_prevalences(self, prevalences, self.classes)
 
-        prevalences = self.quantifier.aggregate(predictions,
-                                                moss_scores,
-                                                moss_labels)
-        
-        prevalences = {self.classes[i]: v for i, v in enumerate(prevalences.values())}
         return prevalences

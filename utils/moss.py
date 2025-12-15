@@ -39,7 +39,7 @@ def MoSS_MN(
     Retorna
     -------
     X : np.ndarray
-        Scores normalizados no simplex (n × n_classes)
+        Scores normalizados no simplex (n < n_classes)
     y : np.ndarray
         Rótulos de classe (n,)
     """
@@ -48,7 +48,9 @@ def MoSS_MN(
     # Distribuição de classes
     if alpha is None:
         alpha = np.ones(n_classes) / n_classes
-    alpha = np.array(alpha)
+    if isinstance(alpha, (int, float)):
+        alpha = np.array([1-alpha, alpha])
+    alpha = np.asarray(alpha)
 
     n_per_class = np.floor(n * alpha).astype(int)
     n_per_class[-1] = n - n_per_class[:-1].sum()
@@ -127,7 +129,9 @@ def MoSS_Dir(
     # Distribuição de classes
     if alpha is None:
         alpha = np.ones(n_classes) / n_classes
-    alpha = np.array(alpha)
+    if isinstance(alpha, (int, float)):
+        alpha = np.array([1-alpha, alpha])
+    alpha = np.asarray(alpha)
 
     n_per_class = np.floor(n * alpha).astype(int)
     n_per_class[-1] = n - n_per_class[:-1].sum()
