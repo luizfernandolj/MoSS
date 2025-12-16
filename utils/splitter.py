@@ -2,7 +2,7 @@ import pandas as pd
 import os
 
 # Ler o arquivo CSV
-df = pd.read_csv('../results/results.csv')
+df = pd.read_csv('results/results.csv')
 
 # Calcular o tamanho de cada parte
 total_rows = len(df)
