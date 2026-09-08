@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture review for MoSS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 5 5; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .hatch {
+        background-image: repeating-linear-gradient(45deg, #e2e8f0 0 6px, #f1f5f9 6px 12px);
+      }
+      .lbl { font: 600 9px ui-sans-serif, system-ui; letter-spacing: .09em; text-transform: uppercase; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      pre.mermaid { background: transparent; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans antialiased">
+    <main class="max-w-5xl mx-auto px-6 py-14 space-y-14">
+
+      <!-- ================= HEADER ================= -->
+      <header class="border-b border-slate-300 pb-8">
+        <p class="text-xs uppercase tracking-[0.2em] text-slate-500">Architecture review</p>
+        <h1 class="font-serif text-5xl mt-2 tracking-tight">MoSS</h1>
+        <p class="text-slate-600 mt-3 text-sm">
+          8 August 2026 &middot; <span class="mono">master</span> @ <span class="mono">6a99840</span>
+          &middot; 1,610 lines of Python &middot; 0 tests
+        </p>
+
+        <div class="mt-6 flex flex-wrap gap-x-7 gap-y-2 text-xs text-slate-600">
+          <span class="flex items-center gap-2">
+            <svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="#334155" stroke-width="1.5"/></svg>
+            module
+          </span>
+          <span class="flex items-center gap-2">
+            <svg width="26" height="14"><line class="seam" x1="13" y1="0" x2="13" y2="14" stroke="#334155" stroke-width="1.5"/></svg>
+            seam
+          </span>
+          <span class="flex items-center gap-2">
+            <svg width="26" height="14"><line x1="1" y1="7" x2="22" y2="7" stroke="#dc2626" stroke-width="1.8"/><path d="M22 3 L26 7 L22 11 Z" fill="#dc2626"/></svg>
+            leakage
+          </span>
+          <span class="flex items-center gap-2">
+            <svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="#0f172a"/></svg>
+            deep module
+          </span>
+          <span class="flex items-center gap-2">
+            <svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="2 2"/></svg>
+            now internal
+          </span>
+        </div>
+      </header>
+
+      <!-- ================= CANDIDATES ================= -->
+      <section id="candidates" class="space-y-16">
+
+        <!-- ---------- C1 ---------- -->
+        <article id="c1" class="scroll-mt-8">
+          <div class="flex items-baseline gap-3 flex-wrap">
+            <span class="mono text-xs text-slate-400">01</span>
+            <h2 class="font-serif text-3xl tracking-tight">One interface for the three score simulators</h2>
+          </div>
+          <div class="flex gap-2 mt-3 flex-wrap">
+            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900">Strong</span>
+            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-200 text-slate-700">in-process</span>
+          </div>
+
+          <p class="mono text-sm text-slate-500 mt-4">
+            utils/moss.py &middot; utils/quadapt_variant.py:12-65 &middot; dashboard_moss.py:106-166 &middot; binary_experiment.py:22-33
+          </p>
+
+          <!-- mass diagram -->
+          <div class="grid grid-cols-2 gap-5 mt-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before &mdash; shallow</p>
+              <svg viewBox="0 0 400 300" class="w-full">
+                <!-- three simulators, each with a fat interface bar -->
+                <g>
+                  <rect x="10" y="14" width="118" height="56" fill="#fecaca" stroke="#dc2626" stroke-width="1.2"/>
+                  <text class="lbl" x="18" y="34" fill="#7f1d1d">MoSS</text>
+                  <text class="mono" x="18" y="48" font-size="8" fill="#7f1d1d">n, alpha:float,</text>
+                  <text class="mono" x="18" y="60" font-size="8" fill="#7f1d1d">merging_factor</text>
+                  <rect x="10" y="70" width="118" height="46" fill="#f8fafc" stroke="#94a3b8" stroke-width="1"/>
+                  <text class="lbl" x="18" y="96" fill="#64748b">impl</text>
+                </g>
+                <g>
+                  <rect x="141" y="14" width="118" height="56" fill="#fecaca" stroke="#dc2626" stroke-width="1.2"/>
+                  <text class="lbl" x="149" y="34" fill="#7f1d1d">MoSS_MN</text>
+                  <text class="mono" x="149" y="48" font-size="8" fill="#7f1d1d">n, n_classes,</text>
+                  <text class="mono" x="149" y="60" font-size="8" fill="#7f1d1d">alpha:arr, m, rs</text>
+                  <rect x="141" y="70" width="118" height="60" fill="#f8fafc" stroke="#94a3b8" stroke-width="1"/>
+                  <text class="lbl" x="149" y="103" fill="#64748b">impl</text>
+                </g>
+                <g>
+                  <rect x="272" y="14" width="118" height="56" fill="#fecaca" stroke="#dc2626" stroke-width="1.2"/>
+                  <text class="lbl" x="280" y="34" fill="#7f1d1d">MoSS_Dir</text>
+                  <text class="mono" x="280" y="48" font-size="8" fill="#7f1d1d">n, n_classes,</text>
+                  <text class="mono" x="280" y="60" font-size="8" fill="#7f1d1d">alpha:arr, m, rs</text>
+                  <rect x="272" y="70" width="118" height="60" fill="#f8fafc" stroke="#94a3b8" stroke-width="1"/>
+                  <text class="lbl" x="280" y="103" fill="#64748b">impl</text>
+                </g>
+
+                <!-- shallow adapters -->
+                <text class="lbl" x="10" y="158" fill="#dc2626">4 shallow adapters reshape alpha</text>
+                <rect x="10" y="166" width="90" height="30" fill="#fff" stroke="#dc2626" stroke-width="1"/>
+                <text class="mono" x="15" y="185" font-size="7.5" fill="#7f1d1d">QuadaptMoSS</text>
+                <rect x="106" y="166" width="90" height="30" fill="#fff" stroke="#dc2626" stroke-width="1"/>
+                <text class="mono" x="111" y="185" font-size="7.5" fill="#7f1d1d">..MoSS_MN</text>
+                <rect x="202" y="166" width="90" height="30" fill="#fff" stroke="#dc2626" stroke-width="1"/>
+                <text class="mono" x="207" y="185" font-size="7.5" fill="#7f1d1d">..MoSS_Dir</text>
+                <rect x="298" y="166" width="92" height="30" fill="#fff" stroke="#dc2626" stroke-width="1" stroke-dasharray="3 2"/>
+                <text class="mono" x="303" y="181" font-size="7.5" fill="#7f1d1d">..MoSS_Dir</text>
+                <text class="mono" x="303" y="191" font-size="7" fill="#dc2626">(dup, dead)</text>
+
+                <!-- leaking callers -->
+                <line x1="55" y1="196" x2="55" y2="232" stroke="#dc2626" stroke-width="1.5"/>
+                <line x1="151" y1="196" x2="151" y2="232" stroke="#dc2626" stroke-width="1.5"/>
+                <line x1="247" y1="196" x2="247" y2="232" stroke="#dc2626" stroke-width="1.5"/>
+                <rect x="10" y="234" width="380" height="52" fill="#fef2f2" stroke="#dc2626" stroke-width="1.2"/>
+                <text class="lbl" x="18" y="252" fill="#7f1d1d">callers know which variant they hold</text>
+                <text class="mono" x="18" y="267" font-size="8" fill="#7f1d1d">dashboard_moss: if variant == "MoSS_MN (...)": ...</text>
+                <text class="mono" x="18" y="279" font-size="8" fill="#7f1d1d">quadapt_variant: if isinstance(alpha, float): alpha = [1-a, a]  x3</text>
+              </svg>
+            </div>
+
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">After &mdash; deep</p>
+              <svg viewBox="0 0 400 300" class="w-full">
+                <!-- one narrow interface -->
+                <rect x="10" y="14" width="380" height="34" fill="#0f172a"/>
+                <text class="lbl" x="20" y="30" fill="#e2e8f0">score simulator &mdash; interface</text>
+                <text class="mono" x="20" y="42" font-size="8.5" fill="#94a3b8">simulate(n, alpha, merging_factor, random_state) -&gt; (scores, labels)</text>
+
+                <!-- seam -->
+                <line class="seam" x1="10" y1="56" x2="390" y2="56" stroke="#0f172a" stroke-width="1.5"/>
+                <text class="lbl" x="332" y="68" fill="#475569">seam</text>
+
+                <!-- implementation absorbs everything -->
+                <rect x="10" y="74" width="380" height="140" fill="#f8fafc" stroke="#0f172a" stroke-width="1.6"/>
+                <text class="lbl" x="20" y="92" fill="#0f172a">implementation</text>
+                <rect x="24" y="102" width="352" height="24" fill="#fff" stroke="#94a3b8" stroke-dasharray="2 2"/>
+                <text class="mono" x="32" y="118" font-size="8" fill="#64748b">normalise alpha -&gt; simplex vector (was in 4 places)</text>
+                <rect x="24" y="132" width="352" height="24" fill="#fff" stroke="#94a3b8" stroke-dasharray="2 2"/>
+                <text class="mono" x="32" y="148" font-size="8" fill="#64748b">n_per_class = floor(n * alpha), remainder to last</text>
+                <g>
+                  <rect x="24" y="162" width="112" height="42" fill="#fff" stroke="#94a3b8" stroke-dasharray="2 2"/>
+                  <text class="mono" x="30" y="186" font-size="8" fill="#64748b">uniform^m</text>
+                  <rect x="144" y="162" width="112" height="42" fill="#fff" stroke="#94a3b8" stroke-dasharray="2 2"/>
+                  <text class="mono" x="150" y="186" font-size="8" fill="#64748b">mvn diag</text>
+                  <rect x="264" y="162" width="112" height="42" fill="#fff" stroke="#94a3b8" stroke-dasharray="2 2"/>
+                  <text class="mono" x="270" y="186" font-size="8" fill="#64748b">dirichlet</text>
+                </g>
+
+                <!-- callers -->
+                <line x1="200" y1="214" x2="200" y2="246" stroke="#334155" stroke-width="1.5"/>
+                <path d="M196 240 L200 248 L204 240 Z" fill="#334155"/>
+                <rect x="10" y="250" width="380" height="36" fill="#ecfdf5" stroke="#059669" stroke-width="1.2"/>
+                <text class="lbl" x="18" y="266" fill="#065f46">callers pass alpha; nothing else</text>
+                <text class="mono" x="18" y="279" font-size="8" fill="#065f46">QuaDapt.MoSS = staticmethod(simulate_dirichlet)</text>
+              </svg>
+            </div>
+          </div>
+
+          <dl class="mt-6 grid sm:grid-cols-2 gap-x-10 gap-y-4 text-sm">
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-slate-500">Problem</dt>
+              <dd class="mt-1 text-slate-700">Three simulators, three interfaces, so every caller must know which one it holds and reshape <span class="mono text-xs">alpha</span> itself.</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-slate-500">Solution</dt>
+              <dd class="mt-1 text-slate-700">Make all three satisfy the seam <span class="mono text-xs">mlquantify</span> already defines: <span class="mono text-xs">MoSS(n, alpha, merging_factor)</span>. Absorb alpha normalisation and class-count arithmetic into the implementation.</dd>
+            </div>
+          </dl>
+
+          <ul class="mt-5 grid sm:grid-cols-2 gap-x-10 gap-y-1.5 text-sm text-slate-700 list-disc pl-5 marker:text-emerald-600">
+            <li>Interface shrinks to one call shape</li>
+            <li>Locality: alpha coercion stops leaking to 4 call sites</li>
+            <li>Delete 3 shallow adapters plus 1 dead duplicate</li>
+            <li>Leverage: one interface, N simulators</li>
+            <li>Tests hit one interface: rows sum to 1, counts match alpha</li>
+            <li>Dashboard drops its variant if-chain</li>
+          </ul>
+
+          <div class="mt-5 rounded-md bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-900">
+            <span class="font-semibold">Found while reading:</span>
+            <span class="mono text-xs">QuadaptMoSS_Dir</span> is defined twice, identically, at
+            <span class="mono text-xs">utils/quadapt_variant.py:34</span> and <span class="mono text-xs">:52</span>.
+            The first is shadowed and dead. Copy-paste drift is the symptom this candidate treats.
+          </div>
+        </article>
+
+        <!-- ---------- C2 ---------- -->
+        <article id="c2" class="scroll-mt-8 border-t border-slate-200 pt-14">
+          <div class="flex items-baseline gap-3 flex-wrap">
+            <span class="mono text-xs text-slate-400">02</span>
+            <h2 class="font-serif text-3xl tracking-tight">A results module that owns the run vocabulary</h2>
+          </div>
+          <div class="flex gap-2 mt-3 flex-wrap">
+            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900">Strong</span>
+            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-200 text-slate-700">local-substitutable</span>
+          </div>
+
+          <p class="mono text-sm text-slate-500 mt-4">
+            dashboard.py:99-159 &middot; export_grid_matplotlib.py:40-95 &middot; utils/splitter.py &middot; results/results_part{1,2,3}.csv
+          </p>
+
+          <div class="grid grid-cols-2 gap-5 mt-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before</p>
+              <pre class="mermaid">
+flowchart TB
+  E["binary_experiment"] --> R[("results.csv 278MB")]
+  R --> S["splitter.py"]
+  S --> P1[("part1")]
+  S --> P2[("part2")]
+  S --> P3[("part3")]
+  P1 --> D["dashboard.load_results"]
+  P2 --> D
+  P3 --> D
+  P1 --> X["export.load_and_prepare_results"]
+  P2 --> X
+  P3 --> X
+  D -. "same usecols, dtype, rename map" .-> X
+  D --> DL["create_method_label"]
+  X --> XL["create_method_label (copy)"]
+  classDef leak fill:#fef2f2,stroke:#dc2626,stroke-width:2px;
+  class D,X,DL,XL leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-2">After</p>
+              <pre class="mermaid">
+flowchart TB
+  E["binary_experiment"] --> RS["results module"]
+  RS --> P[("parts on disk")]
+  P --> RS2["results module"]
+  RS2 --> D["dashboard"]
+  RS2 --> X["export_grid_matplotlib"]
+  subgraph internal ["now internal"]
+    direction LR
+    I1["split / concat"]
+    I2["canonical names"]
+    I3["method label"]
+  end
+  RS2 --- internal
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a,stroke-width:2px;
+  classDef faded fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:3 3,color:#64748b;
+  class RS,RS2 deep
+  class I1,I2,I3 faded
+              </pre>
+            </div>
+          </div>
+
+          <!-- the live bug -->
+          <div class="mt-6 rounded-lg border-2 border-red-400 bg-red-50 p-5">
+            <p class="text-xs uppercase tracking-wider text-red-800 font-semibold">Live bug &mdash; the published figure is wrong</p>
+            <p class="text-sm text-red-900 mt-2">
+              With no module owning the run vocabulary, the names drifted. I ran the filter against the data:
+            </p>
+            <div class="mt-3 grid sm:grid-cols-3 gap-3 text-xs">
+              <div class="bg-white rounded border border-red-200 p-3">
+                <p class="uppercase tracking-wider text-slate-500 mb-1.5">In the data</p>
+                <p class="mono text-slate-800 leading-relaxed">CC DyS HDy SMM SORD T50 TAC TMAX <b>TMS</b> TMS2 <b>TX</b></p>
+              </div>
+              <div class="bg-white rounded border border-red-200 p-3">
+                <p class="uppercase tracking-wider text-slate-500 mb-1.5">export.ALLOWED_QUANTIFIERS</p>
+                <p class="mono text-slate-800 leading-relaxed">TAC TMAX T50 HDy <b class="text-red-600">X</b> <b class="text-red-600">MS</b> DyS SMM</p>
+              </div>
+              <div class="bg-white rounded border border-red-200 p-3">
+                <p class="uppercase tracking-wider text-slate-500 mb-1.5">Match nothing</p>
+                <p class="mono text-red-700 font-bold text-base">X, MS</p>
+                <p class="text-slate-600 mt-1.5">The grid plots 6 quantifiers where 8 were intended.</p>
+              </div>
+            </div>
+            <p class="text-sm text-red-900 mt-3">
+              <span class="mono text-xs">grid_matplotlib_stylized.pdf</span> is silently missing TX and TMS. No test can catch this today,
+              because the names live in two modules and are never compared to the data.
+            </p>
+          </div>
+
+          <dl class="mt-6 grid sm:grid-cols-2 gap-x-10 gap-y-4 text-sm">
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-slate-500">Problem</dt>
+              <dd class="mt-1 text-slate-700">Two readers each re-implement loading, the PACC/PCC drop, the QuaDapt rename map and <span class="mono text-xs">create_method_label</span>; the 3-way CSV split is a storage detail both of them know.</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-slate-500">Solution</dt>
+              <dd class="mt-1 text-slate-700">One module behind <span class="mono text-xs">load_runs()</span> and <span class="mono text-xs">method_label(row)</span>, owning paths, the split, dtypes and canonical names. <span class="mono text-xs">splitter.py</span> becomes its writer.</dd>
+            </div>
+          </dl>
+
+          <ul class="mt-5 grid sm:grid-cols-2 gap-x-10 gap-y-1.5 text-sm text-slate-700 list-disc pl-5 marker:text-emerald-600">
+            <li>Locality: renames live in one implementation</li>
+            <li>Leverage: one interface, two readers</li>
+            <li>Name drift becomes a test, not a silent drop</li>
+            <li>Deletes ~60 duplicated lines</li>
+            <li>On-disk layout stops leaking across the seam</li>
+            <li>Testable on a 20-row fixture, not 250MB</li>
+          </ul>
+        </article>
+
+        <!-- ---------- C3 ---------- -->
+        <article id="c3" class="scroll-mt-8 border-t border-slate-200 pt-14">
+          <div class="flex items-baseline gap-3 flex-wrap">
+            <span class="mono text-xs text-slate-400">03</span>
+            <h2 class="font-serif text-3xl tracking-tight">A prevalence-estimate seam inside the sweep</h2>
+          </div>
+          <div class="flex gap-2 mt-3 flex-wrap">
+            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900">Strong</span>
+            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-200 text-slate-700">in-process</span>
+          </div>
+
+          <p class="mono text-sm text-slate-500 mt-4">binary_experiment.py:12-91 &middot; variables.py</p>
+
+          <!-- cross-section -->
+          <div class="grid grid-cols-2 gap-5 mt-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before &mdash; one body, no seam</p>
+              <div class="space-y-1">
+                <div class="h-9 border-l-4 border-slate-400 bg-slate-50 flex items-center px-3 text-xs mono text-slate-600">for moss_train, moss_test, m_tr, m_ts, alpha</div>
+                <div class="h-9 border-l-4 border-slate-400 bg-slate-50 flex items-center px-3 text-xs mono text-slate-600 ml-3">simulate train + test score sets</div>
+                <div class="h-9 border-l-4 border-slate-400 bg-slate-50 flex items-center px-3 text-xs mono text-slate-600 ml-6">for repetition, quadapt, quantifier</div>
+                <div class="h-9 border-l-4 border-red-500 bg-red-50 flex items-center px-3 text-xs mono text-red-800 ml-9">if qtf_name == "CC"</div>
+                <div class="h-9 border-l-4 border-red-500 bg-red-50 flex items-center px-3 text-xs mono text-red-800 ml-9">elif variant != "None"</div>
+                <div class="h-9 border-l-4 border-red-500 bg-red-50 flex items-center px-3 text-xs mono text-red-800 ml-9">if variant == "QuadaptNew"</div>
+                <div class="h-9 border-l-4 border-red-500 bg-red-50 flex items-center px-3 text-xs mono text-red-800 ml-9">else: 3-arg aggregate</div>
+                <div class="h-9 border-l-4 border-amber-500 bg-amber-50 flex items-center px-3 text-xs mono text-amber-900 ml-9">except: print, fall through</div>
+                <div class="h-9 border-l-4 border-slate-400 bg-slate-50 flex items-center px-3 text-xs mono text-slate-600 ml-9">MAE + row dict</div>
+              </div>
+              <p class="text-xs text-slate-500 mt-3">Interface: <span class="mono">7 positional args + 6 module globals</span>. Nothing inside is reachable on its own.</p>
+            </div>
+
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">After &mdash; one thick band</p>
+              <div class="space-y-1">
+                <div class="h-9 border-l-4 border-slate-800 bg-white flex items-center px-3 text-xs mono text-slate-700">run_sweep(spec) -&gt; DataFrame</div>
+                <div class="h-[136px] border-l-4 border-slate-800 deep rounded-sm flex flex-col justify-center px-4">
+                  <p class="lbl text-slate-300 tracking-[0.12em] text-[10px] uppercase">prevalence estimator &mdash; interface</p>
+                  <p class="mono text-[11px] text-slate-100 mt-1.5">estimate(test_scores, train_scores, train_labels) -&gt; float</p>
+                  <div class="mt-3 grid grid-cols-2 gap-1.5">
+                    <div class="border border-slate-600 border-dashed rounded px-2 py-1 text-[10px] mono text-slate-400">CC adapter</div>
+                    <div class="border border-slate-600 border-dashed rounded px-2 py-1 text-[10px] mono text-slate-400">plain quantifier</div>
+                    <div class="border border-slate-600 border-dashed rounded px-2 py-1 text-[10px] mono text-slate-400">QuaDapt adapter</div>
+                    <div class="border border-slate-600 border-dashed rounded px-2 py-1 text-[10px] mono text-slate-400">QuadaptNew adapter</div>
+                  </div>
+                </div>
+                <div class="h-9 border-l-4 border-slate-800 bg-white flex items-center px-3 text-xs mono text-slate-700">failure -&gt; explicit NaN row</div>
+                <div class="h-9 border-l-4 border-slate-800 bg-white flex items-center px-3 text-xs mono text-slate-700">MAE + row dict</div>
+              </div>
+              <p class="text-xs text-slate-500 mt-3">Four adapters already exist in the if-chain. The seam is real, not hypothetical.</p>
+            </div>
+          </div>
+
+          <!-- the fallthrough bug -->
+          <div class="mt-6 rounded-lg border-2 border-red-400 bg-red-50 p-5">
+            <p class="text-xs uppercase tracking-wider text-red-800 font-semibold">Live bug &mdash; failed runs are recorded as the previous run's result</p>
+            <pre class="mono text-xs bg-white rounded border border-red-200 p-3 mt-3 overflow-x-auto text-slate-800">except Exception as e:
+    print(f"Error in {qtf_name} with {quadapt_variant_name}: {e}")
+    traceback.print_exc()
+<span class="text-red-600 font-bold">                       # no continue, no assignment</span>
+real_prev = get_prev_from_labels(test_labels)
+mae = np.mean(np.abs(<span class="text-red-600 font-bold">prediction</span> - real_prev))   <span class="text-red-600 font-bold"># stale from the last loop pass</span></pre>
+            <p class="text-sm text-red-900 mt-3">
+              <span class="mono text-xs">binary_experiment.py:60-77</span>. Every caught exception writes a row labelled with the failing
+              method but carrying the previous method's estimate. Introduced by commit <span class="mono text-xs">125ae9b</span>
+              (&ldquo;add try except for experiments&rdquo;). Behind an estimator seam the failure has one place to be handled, so this shape is unreachable.
+            </p>
+          </div>
+
+          <dl class="mt-6 grid sm:grid-cols-2 gap-x-10 gap-y-4 text-sm">
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-slate-500">Problem</dt>
+              <dd class="mt-1 text-slate-700">Simulation, per-method calling convention, failure handling, metric and row shaping share one body; adding a method means editing an if-chain over registry key strings.</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-slate-500">Solution</dt>
+              <dd class="mt-1 text-slate-700">One estimator interface with an adapter per calling convention; the registry maps name to adapter. The sweep takes a spec value instead of <span class="mono text-xs">from variables import *</span>.</dd>
+            </div>
+          </dl>
+
+          <ul class="mt-5 grid sm:grid-cols-2 gap-x-10 gap-y-1.5 text-sm text-slate-700 list-disc pl-5 marker:text-emerald-600">
+            <li>Leverage: one interface, 4 calling conventions</li>
+            <li>Locality: CC and QuaDapt special cases concentrate</li>
+            <li>Stale-prediction bug becomes unreachable</li>
+            <li>Test one estimator on a fixed score pair</li>
+            <li>Smoke sweep runs in seconds, not hours</li>
+            <li>Grid stops being module globals</li>
+          </ul>
+
+          <div class="mt-5 rounded-md bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-900">
+            <span class="font-semibold">Related:</span> <span class="mono text-xs">variables.py:69-70</span> keeps a smaller grid commented out.
+            That is the sweep asking for a parameter it does not have. <span class="mono text-xs">from variables import *</span> also
+            supplies <span class="mono text-xs">np</span>, <span class="mono text-xs">pd</span> and
+            <span class="mono text-xs">get_prev_from_labels</span> ambiently &mdash; the sweep's real interface is wider than it looks.
+          </div>
+        </article>
+
+        <!-- ---------- C4 ---------- -->
+        <article id="c4" class="scroll-mt-8 border-t border-slate-200 pt-14">
+          <div class="flex items-baseline gap-3 flex-wrap">
+            <span class="mono text-xs text-slate-400">04</span>
+            <h2 class="font-serif text-3xl tracking-tight">Make the candidate score set the thing that varies</h2>
+          </div>
+          <div class="flex gap-2 mt-3 flex-wrap">
+            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-900">Worth exploring</span>
+            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-200 text-slate-700">in-process</span>
+          </div>
+
+          <p class="mono text-sm text-slate-500 mt-4">utils/quadapt_variant.py:68-137 &middot; newest code, commit 16f075f</p>
+
+          <div class="grid grid-cols-2 gap-5 mt-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before &mdash; mutate self, loop, hope</p>
+              <svg viewBox="0 0 400 300" class="w-full">
+                <rect x="10" y="10" width="380" height="130" fill="#fef2f2" stroke="#dc2626" stroke-width="1.4"/>
+                <text class="lbl" x="20" y="28" fill="#7f1d1d">aggregate()</text>
+                <text class="mono" x="20" y="46" font-size="8.5" fill="#7f1d1d">for Variant in MOSS_VARIANTS:</text>
+                <rect x="34" y="54" width="340" height="26" fill="#fff" stroke="#dc2626" stroke-dasharray="3 2"/>
+                <text class="mono" x="42" y="71" font-size="8.5" fill="#dc2626">self.MoSS = Variant     &#8592; rebinds the object mid-loop</text>
+                <text class="mono" x="20" y="96" font-size="8.5" fill="#7f1d1d">    alpha, d, _ = self.best_mixture(predictions)</text>
+                <text class="mono" x="20" y="114" font-size="8.5" fill="#7f1d1d">prevalence = alphas[argmin(distances)]</text>
+                <text class="mono" x="20" y="132" font-size="7.5" fill="#dc2626">behaviour depends on loop position; not re-entrant</text>
+
+                <line class="seam" x1="10" y1="150" x2="390" y2="150" stroke="#94a3b8"/>
+
+                <rect x="10" y="162" width="380" height="126" fill="#fef2f2" stroke="#dc2626" stroke-width="1.4"/>
+                <text class="lbl" x="20" y="180" fill="#7f1d1d">best_mixture() &mdash; copied from upstream QuaDapt</text>
+                <rect x="24" y="190" width="352" height="24" fill="#fff" stroke="#dc2626" stroke-dasharray="3 2"/>
+                <text class="mono" x="32" y="206" font-size="8" fill="#dc2626">if measure in [...]: DyS() elif "sord": SORD()</text>
+                <rect x="24" y="220" width="352" height="24" fill="#fff" stroke="#dc2626" stroke-dasharray="3 2"/>
+                <text class="mono" x="32" y="236" font-size="8" fill="#dc2626">if measure in [...]: DyS() elif "sord": SORD()  (again)</text>
+                <text class="mono" x="24" y="262" font-size="8.5" fill="#7f1d1d">the only real change vs upstream:</text>
+                <text class="mono" x="24" y="278" font-size="8.5" fill="#7f1d1d">prepend the real train scores as candidate m = 0</text>
+              </svg>
+            </div>
+
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">After &mdash; one list of candidates</p>
+              <svg viewBox="0 0 400 300" class="w-full">
+                <rect x="10" y="10" width="380" height="34" fill="#0f172a"/>
+                <text class="lbl" x="20" y="26" fill="#e2e8f0">candidate score sets &mdash; interface</text>
+                <text class="mono" x="20" y="38" font-size="8" fill="#94a3b8">candidates(train_scores, train_labels) -&gt; [(pos, neg)]</text>
+
+                <line class="seam" x1="10" y1="52" x2="390" y2="52" stroke="#0f172a" stroke-width="1.5"/>
+
+                <rect x="10" y="66" width="380" height="112" fill="#f8fafc" stroke="#0f172a" stroke-width="1.6"/>
+                <text class="lbl" x="20" y="84" fill="#0f172a">implementation</text>
+                <rect x="24" y="94" width="352" height="20" fill="#ecfdf5" stroke="#059669"/>
+                <text class="mono" x="32" y="108" font-size="8" fill="#065f46">real training scores            (m = 0)</text>
+                <rect x="24" y="118" width="352" height="20" fill="#fff" stroke="#94a3b8" stroke-dasharray="2 2"/>
+                <text class="mono" x="32" y="132" font-size="8" fill="#64748b">simulate_uniform   x each merging factor</text>
+                <rect x="24" y="142" width="352" height="20" fill="#fff" stroke="#94a3b8" stroke-dasharray="2 2"/>
+                <text class="mono" x="32" y="156" font-size="8" fill="#64748b">simulate_mvn       x each merging factor</text>
+                <text class="mono" x="32" y="173" font-size="8" fill="#64748b">simulate_dirichlet x each merging factor</text>
+
+                <line x1="200" y1="178" x2="200" y2="206" stroke="#334155" stroke-width="1.5"/>
+                <path d="M196 200 L200 208 L204 200 Z" fill="#334155"/>
+
+                <rect x="10" y="212" width="380" height="76" fill="#ecfdf5" stroke="#059669" stroke-width="1.4"/>
+                <text class="lbl" x="20" y="230" fill="#065f46">upstream best_mixture, unmodified</text>
+                <text class="mono" x="20" y="248" font-size="8.5" fill="#065f46">argmin over distances</text>
+                <text class="mono" x="20" y="266" font-size="8.5" fill="#065f46">measure -&gt; method resolved once</text>
+                <text class="mono" x="20" y="282" font-size="8" fill="#065f46">no self mutation; safe under joblib workers</text>
+              </svg>
+            </div>
+          </div>
+
+          <dl class="mt-6 grid sm:grid-cols-2 gap-x-10 gap-y-4 text-sm">
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-slate-500">Problem</dt>
+              <dd class="mt-1 text-slate-700"><span class="mono text-xs">QuadaptNew</span> rebinds <span class="mono text-xs">self.MoSS</span> inside a loop and re-implements upstream <span class="mono text-xs">best_mixture</span> to add one candidate, duplicating the measure dispatch twice inside itself.</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-slate-500">Solution</dt>
+              <dd class="mt-1 text-slate-700">Vary the candidate score sets, not the object. One interface producing <span class="mono text-xs">(pos_scores, neg_scores)</span> pairs; upstream <span class="mono text-xs">best_mixture</span> stays as-is.</dd>
+            </div>
+          </dl>
+
+          <ul class="mt-5 grid sm:grid-cols-2 gap-x-10 gap-y-1.5 text-sm text-slate-700 list-disc pl-5 marker:text-amber-600">
+            <li>Locality: candidate generation in one module</li>
+            <li>Stops shadowing upstream implementation</li>
+            <li>Object stops mutating mid-aggregate</li>
+            <li>Measure dispatch resolved once</li>
+            <li>Test candidates without running a quantifier</li>
+            <li>Builds directly on candidate 01</li>
+          </ul>
+        </article>
+
+        <!-- ---------- C5 ---------- -->
+        <article id="c5" class="scroll-mt-8 border-t border-slate-200 pt-14">
+          <div class="flex items-baseline gap-3 flex-wrap">
+            <span class="mono text-xs text-slate-400">05</span>
+            <h2 class="font-serif text-3xl tracking-tight">One grid module behind the Streamlit and matplotlib renderers</h2>
+          </div>
+          <div class="flex gap-2 mt-3 flex-wrap">
+            <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-900">Worth exploring</span>
+            <span class="text-xs px-2.5 py-1 rounded-full bg-slate-200 text-slate-700">local-substitutable</span>
+          </div>
+
+          <p class="mono text-sm text-slate-500 mt-4">dashboard.py:342-429 &middot; export_grid_matplotlib.py:112-206 &middot; dashboard.py:12-84 (dead)</p>
+
+          <div class="grid grid-cols-2 gap-5 mt-6">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before</p>
+              <div class="space-y-2.5">
+                <div class="border border-red-400 bg-red-50 rounded p-3">
+                  <p class="mono text-[11px] text-red-900 font-semibold">dashboard.py &mdash; 480 lines, module level</p>
+                  <p class="text-[11px] text-red-800 mt-1.5">3x3 loop, eps masking, CC split-out, palette assignment, downsampling &mdash; all inline. No function to call.</p>
+                </div>
+                <div class="border border-red-400 bg-red-50 rounded p-3">
+                  <p class="mono text-[11px] text-red-900 font-semibold">export_grid_matplotlib.plot_grid</p>
+                  <p class="text-[11px] text-red-800 mt-1.5">Same 3x3 loop, same eps masking, different filter constants. Diverged silently (see candidate 02).</p>
+                </div>
+                <div class="border border-slate-300 hatch rounded p-3">
+                  <p class="mono text-[11px] text-slate-700 font-semibold">dashboard.plot_3d + NUMBER_OF_SAMPLES</p>
+                  <p class="text-[11px] text-slate-600 mt-1.5">Verbatim copy of <span class="mono">dashboard_moss.plot_3d</span>. Never called. 73 dead lines.</p>
+                </div>
+                <div class="text-[11px] text-slate-500 mono pt-1">grid selection knowledge lives in 2 places, drifting</div>
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500 mb-3">After</p>
+              <div class="space-y-2.5">
+                <div class="deep rounded p-3">
+                  <p class="lbl text-slate-300 text-[10px]">grid module &mdash; interface</p>
+                  <p class="mono text-[11px] text-slate-100 mt-1.5">grid_cells(runs, m_trains, test_variants) -&gt; cells</p>
+                  <div class="mt-2.5 space-y-1">
+                    <div class="border border-slate-600 border-dashed rounded px-2 py-1 text-[10px] mono text-slate-400">eps masking</div>
+                    <div class="border border-slate-600 border-dashed rounded px-2 py-1 text-[10px] mono text-slate-400">CC baseline split-out</div>
+                    <div class="border border-slate-600 border-dashed rounded px-2 py-1 text-[10px] mono text-slate-400">method labels + ordering</div>
+                    <div class="border border-slate-600 border-dashed rounded px-2 py-1 text-[10px] mono text-slate-400">downsampling</div>
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2.5">
+                  <div class="border border-emerald-500 bg-emerald-50 rounded p-2.5">
+                    <p class="mono text-[11px] text-emerald-900 font-semibold">plotly renderer</p>
+                    <p class="text-[10px] text-emerald-800 mt-1">traces only</p>
+                  </div>
+                  <div class="border border-emerald-500 bg-emerald-50 rounded p-2.5">
+                    <p class="mono text-[11px] text-emerald-900 font-semibold">matplotlib renderer</p>
+                    <p class="text-[10px] text-emerald-800 mt-1">axes only</p>
+                  </div>
+                </div>
+                <div class="text-[11px] text-slate-500 mono pt-1">two adapters justify the seam: screen and paper</div>
+              </div>
+            </div>
+          </div>
+
+          <dl class="mt-6 grid sm:grid-cols-2 gap-x-10 gap-y-4 text-sm">
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-slate-500">Problem</dt>
+              <dd class="mt-1 text-slate-700">Which cell shows which runs is decided twice &mdash; once in Streamlit script body, once in matplotlib &mdash; so the on-screen grid and the paper grid can disagree, and neither can be checked without rendering.</dd>
+            </div>
+            <div>
+              <dt class="text-xs uppercase tracking-wider text-slate-500">Solution</dt>
+              <dd class="mt-1 text-slate-700">One module turning runs into cells of plottable frames; the renderers only draw. Delete the dead <span class="mono text-xs">plot_3d</span> copy in <span class="mono text-xs">dashboard.py</span>.</dd>
+            </div>
+          </dl>
+
+          <ul class="mt-5 grid sm:grid-cols-2 gap-x-10 gap-y-1.5 text-sm text-slate-700 list-disc pl-5 marker:text-amber-600">
+            <li>Screen and paper grids cannot diverge</li>
+            <li>Locality: selection rules in one implementation</li>
+            <li>Delete 73 dead lines outright</li>
+            <li>Assert on cells; no rendering needed</li>
+          </ul>
+        </article>
+      </section>
+
+      <!-- ================= TOP RECOMMENDATION ================= -->
+      <section id="top-recommendation" class="border-t-2 border-slate-800 pt-10">
+        <p class="text-xs uppercase tracking-[0.2em] text-slate-500">Top recommendation</p>
+        <div class="mt-4 rounded-xl deep text-slate-100 p-8">
+          <h2 class="font-serif text-3xl tracking-tight">
+            <a href="#c2" class="hover:underline decoration-emerald-400 decoration-2 underline-offset-4">02 &mdash; A results module that owns the run vocabulary</a>
+          </h2>
+          <p class="mt-4 text-slate-300 leading-relaxed">
+            It is the only candidate where the missing depth is producing a wrong artefact right now: the published grid
+            silently drops TX and TMS because the reader's filter and the data disagree on names. It is also the smallest
+            deepening on the list &mdash; two readers collapse into one interface, and the drift that caused the bug becomes
+            something a test can assert.
+          </p>
+          <p class="mt-4 text-slate-400 text-sm">
+            Then <a href="#c1" class="text-emerald-400 hover:underline">01</a> &mdash; it is the deepest win in the repo and
+            <a href="#c4" class="text-emerald-400 hover:underline">04</a> depends on it.
+            <a href="#c3" class="text-emerald-400 hover:underline">03</a> carries the second live bug and is worth doing before the next sweep runs.
+          </p>
+        </div>
+      </section>
+
+      <footer class="text-xs text-slate-400 pt-4 pb-8">
+        Vocabulary: module, interface, implementation, depth, seam, adapter, leverage, locality.
+      </footer>
+    </main>
+  </body>
+</html>
