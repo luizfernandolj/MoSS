@@ -16,10 +16,10 @@ from utils.quadapt_variant import (
     QuadaptNew
 )
 from mlquantify.adjust_counting import (
-    ACC,
-    X_method,
+    TAC,
+    TX,
     T50,
-    MAX,
+    TMAX,
     MS,
     MS2,
     CC
@@ -54,12 +54,12 @@ QUANTIFIERS = { # Quantifiers for QuaDapt Framework
     "HDy": HDy,
     "SORD": SORD,
     "SMM": SMM,
-    "ACC": ACC,
-    "X_method": X_method,
+    "TAC": TAC,
+    "TX": TX,
     "T50": T50,
-    "MAX": MAX,
-    "MS": MS,
-    "MS2": MS2,
+    "TMAX": TMAX,
+    "TMS": MS,
+    "TMS2": MS2,
     "CC": CC,
 }
 

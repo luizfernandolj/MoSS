@@ -1,5 +1,11 @@
 from mlquantify.meta import QuaDapt
-from mlquantify.utils._validation import validate_prevalences
+from mlquantify.utils import (
+    validate_prevalences, 
+    validate_data, 
+    apply_cross_validation
+)
+from mlquantify.base_aggregative import uses_soft_predictions, get_aggregation_requirements
+from mlquantify.mixture import DyS, SORD
 from utils.moss import (MoSS_MN, MoSS_Dir, MoSS)
 import numpy as np
 
@@ -63,9 +69,12 @@ class QuadaptNew(QuaDapt):
 
     MOSS_VARIANTS = [MoSS, MoSS_MN, MoSS_Dir]
     
-    def aggregate(self, predictions, train_y_values):
+    def aggregate(self, predictions, train_labels, train_scores):
 
-        self.classes = self.classes if hasattr(self, 'classes') else np.unique(train_y_values)
+        self.classes = self.classes if hasattr(self, 'classes') else np.unique(train_labels)
+
+        self.pos_scores = train_scores[train_labels == 1][:, 1]
+        self.neg_scores = train_scores[train_labels == 0][:, 1]
 
         distances = []
         alphas = []
@@ -83,3 +92,46 @@ class QuadaptNew(QuaDapt):
         prevalences = validate_prevalences(self, prevalences, self.classes)
 
         return prevalences
+
+
+    def best_mixture(self, predictions):
+        predictions = predictions[:, 1]
+        
+        MF = np.atleast_1d(np.round(self.merging_factors, 2)).astype(float)
+        MF = np.insert(MF, 0, 0.0)
+   
+        
+        distances = []
+        alphas = []
+
+
+        if self.measure in ["hellinger", "topsoe", "probsymm"]:
+            method = DyS(measure=self.measure)
+        elif self.measure == "sord":
+            method = SORD()
+
+        train_alpha, train_distance = method.best_mixture(predictions, self.pos_scores, self.neg_scores)
+
+        distances.append(train_distance)
+        alphas.append(train_alpha)
+
+        for mf in MF[1:]:
+            scores, labels = self.MoSS(n=1000, alpha=0.5, merging_factor=mf)
+            pos_scores = scores[labels == 1][:, 1]
+            neg_scores = scores[labels == 0][:, 1]
+
+            if self.measure in ["hellinger", "topsoe", "probsymm"]:
+                method = DyS(measure=self.measure)
+            elif self.measure == "sord":
+                method = SORD()
+            
+            alpha, distance = method.best_mixture(predictions, pos_scores, neg_scores)
+            
+            distances.append(distance)
+            alphas.append(alpha)
+
+        
+        best_m = MF[np.argmin(distances)]
+        best_alpha = alphas[np.argmin(distances)]
+        best_distance = np.min(distances)
+        return best_alpha, best_distance, best_m

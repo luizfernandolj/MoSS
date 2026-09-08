@@ -2,12 +2,6 @@ import numpy as np
 
 EPS = 0.04
 
-def transform_m(m):
-    m = float(m)
-    if m <= 0.9:
-        return m
-    t = (m - 0.9) / 0.1
-    return 0.9 + t * (5 - 0.9)
 
 # ======================================================================
 # 💠 MoSS_MN — Geração de scores no simplex via Normal Multivariada
@@ -17,6 +11,7 @@ def MoSS_MN(
     n_classes: int = 2,
     alpha: np.ndarray | None = None,
     merging_factor: float | np.ndarray = 0.0,
+    random_state: int | None = None,
 ):
     """
     Gera scores multiclasse sintéticos com base em uma 
@@ -43,9 +38,9 @@ def MoSS_MN(
     y : np.ndarray
         Rótulos de classe (n,)
     """
+    rng = np.random.default_rng(random_state)
     merging_factor = np.clip(merging_factor, 0.0, 1.0)
 
-    # Distribuição de classes
     if alpha is None:
         alpha = np.ones(n_classes) / n_classes
     if isinstance(alpha, (int, float)):
@@ -55,33 +50,23 @@ def MoSS_MN(
     n_per_class = np.floor(n * alpha).astype(int)
     n_per_class[-1] = n - n_per_class[:-1].sum()
 
-    # -----------------------------------------
-    # 1) Centrôides fixos — vértices do simplex
-    # -----------------------------------------
     centers = np.eye(n_classes)
 
-    # -----------------------------------------
-    # 2) Variância controlada por merging_factor
-    # -----------------------------------------
     if isinstance(merging_factor, (int, float)):
         var_per_class = np.full(n_classes, float(merging_factor))
     else:
         var_per_class = np.array(merging_factor)
 
     covs = [
-        np.diag(np.full(n_classes, transform_m(EPS + v)))
+        np.diag(np.full(n_classes, EPS + v))
         for v in var_per_class
     ]
 
-    # -----------------------------------------
-    # 3) Amostragem das classes
-    # -----------------------------------------
     X, y = [], []
     for c in range(n_classes):
         mean, cov = centers[c], covs[c]
-        X_class = np.random.multivariate_normal(mean, cov, size=n_per_class[c])
+        X_class = rng.multivariate_normal(mean, cov, size=n_per_class[c])
 
-        # Normaliza para o simplex
         X_class = np.abs(X_class)
         X_class /= X_class.sum(axis=1, keepdims=True)
 
@@ -99,6 +84,7 @@ def MoSS_Dir(
     n_classes: int = 2,
     alpha: np.ndarray | None = None,
     merging_factor: float | np.ndarray = 0.5,
+    random_state: int | None = None,
 ):
     """
     Gera scores sintéticos multiclasse usando distribuição Dirichlet.
@@ -124,9 +110,9 @@ def MoSS_Dir(
     y : np.ndarray
         Rótulos de classe (n_samples,)
     """
+    rng = np.random.default_rng(random_state)
     merging_factor = np.clip(merging_factor, 0.1, 1.0)
 
-    # Distribuição de classes
     if alpha is None:
         alpha = np.ones(n_classes) / n_classes
     if isinstance(alpha, (int, float)):
@@ -136,28 +122,26 @@ def MoSS_Dir(
     n_per_class = np.floor(n * alpha).astype(int)
     n_per_class[-1] = n - n_per_class[:-1].sum()
 
-    # Centrôides fixos no simplex
     centers = np.eye(n_classes)
 
     X, y = [], []
     for c in range(n_classes):
-        # m por classe (permite vetor)
-        m_c = float(merging_factor[c]) if isinstance(merging_factor, (list, np.ndarray)) else float(merging_factor)
+        if isinstance(merging_factor, (list, np.ndarray)):
+            m_c = float(merging_factor[c])
+        else:
+            m_c = float(merging_factor)
+
         m_c = np.clip(m_c, 0.0, 1.0)
 
-        # Controle de concentração
         m_c = 0.5 * m_c + 0.5
         high_conc = 100 ** m_c
 
-        # Mistura entre centróide puro e distribuição uniforme
         center = centers[c]
         mean = center * (1 - m_c)
         
-        # concentra mais                       # mais uniforme
         concentration = (1 - m_c) * (mean * high_conc) + m_c * np.ones(n_classes)
 
-        # Geração Dirichlet
-        X_class = np.random.dirichlet(concentration, size=n_per_class[c])
+        X_class = rng.dirichlet(concentration, size=n_per_class[c])
 
         X.append(X_class)
         y.append(np.full(n_per_class[c], c))
@@ -169,7 +153,7 @@ def MoSS_Dir(
 # 🔶 MoSS — Geração de amostras binárias com controle de dispersã
 # =====================================================================
 
-def MoSS(n=1000, alpha=0.5, merging_factor=0.5):
+def MoSS(n=1000, alpha=0.5, merging_factor=0.5, random_state=None):
     """
     Gera amostras sintéticas binárias com controle de dispersão via potência m.
     
@@ -179,10 +163,12 @@ def MoSS(n=1000, alpha=0.5, merging_factor=0.5):
         Número total de amostras.
     alpha : float
         Proporção da classe positiva (classe 1).
-    m : float
+    merging_factor : float
         Controle da concentração/dispersão das amostras.
         m pequeno → amostras mais próximas a 0 ou 1;
         m grande → amostras mais dispersas.
+    random_state : int ou None
+        Semente para reprodutibilidade. None usa entropia do SO.
     
     Retorna
     -------
@@ -191,17 +177,16 @@ def MoSS(n=1000, alpha=0.5, merging_factor=0.5):
     y : np.ndarray, shape (n,)
         Labels correspondentes (0 ou 1).
     """
+    rng = np.random.default_rng(random_state)
+
     if isinstance(alpha, list):
         alpha = float(alpha[1])
     n_pos = int(n * alpha)
     n_neg = n - n_pos
     
-    # Scores positivos
-    p_score = np.random.uniform(size=n_pos) ** merging_factor
-    # Scores negativos
-    n_score = 1 - (np.random.uniform(size=n_neg) ** merging_factor)
+    p_score = rng.uniform(size=n_pos) ** merging_factor
+    n_score = 1 - (rng.uniform(size=n_neg) ** merging_factor)
     
-    # Construção dos arrays de features (duas colunas iguais)
     moss = np.column_stack(
         ( 
             1 - np.concatenate((p_score, n_score)),

@@ -38,8 +38,17 @@ def run_experiment(m_train,
                     if qtf_name == "CC":
                         prediction = quantifier().aggregate(test_scores)[1]
                     elif quadapt_variant_name != "None":
-                        prediction = quadapt_variant(quantifier()).aggregate(test_scores, 
-                                                                                [0, 1])
+                        if quadapt_variant_name == "QuadaptNew":
+                            prediction = quadapt_variant(quantifier()).aggregate(
+                                test_scores,
+                                train_labels,
+                                train_scores
+                            )
+                        else:
+                            prediction = quadapt_variant(quantifier()).aggregate(
+                                test_scores,
+                                train_labels
+                            )
                         prediction = list(prediction.values())[1]
                     else:
                         prediction = quantifier().aggregate(
@@ -49,7 +58,19 @@ def run_experiment(m_train,
                         )
                         prediction = list(prediction.values())[1]
                 except Exception as e:
+                    import traceback
                     print(f"Error in {qtf_name} with {quadapt_variant_name}: {e}")
+                    print(
+                        "mtr:", m_train, 
+                        "\nmtest:", m_test, 
+                        "\nalpha:", alpha, 
+                        "\nqtf:", qtf_name, 
+                        "\nquadapt:", quadapt_variant_name,
+                        "\nmoss_train_variant:", moss_train_variant_name,
+                        "\nmoss_test_variant:", moss_test_variant_name
+                    )
+                    traceback.print_exc()
+           
 
                 real_prev = get_prev_from_labels(test_labels)
                 real_prev = list(real_prev.values())[1]
@@ -94,7 +115,7 @@ def main(results_path):
     dfs = list(
         tqdm(
             Parallel(
-                n_jobs=16,
+                n_jobs=-1,
                 backend="loky",          # padrão recomendado para CPU-bound + sklearn [web:46][web:49]
                 return_as="generator",   # permite usar tqdm em cima do gerador [web:61][web:60]
             )(

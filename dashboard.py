@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 NUMBER_OF_SAMPLES = 500
@@ -131,8 +132,12 @@ def load_results():
         .astype("string")
         .fillna("None")
         .replace({None: "None"})
-        .astype("category")
     )
+    # Normaliza nomes para exibição consistente
+    results["Quadapt_Variant"] = results["Quadapt_Variant"].replace({
+        "Quadapt_MoSS": "Quadapt",
+        "QuadaptNew": "Quadapt_New",
+    }).astype("category")
     return results
 
 @st.cache_data(show_spinner=True)
@@ -157,19 +162,19 @@ results_agg = pre_aggregate(results)
 # 2) Cores e legendas
 # ============================
 quadapt_color_palettes = {
-    "None": ["#0000FF", "#4169E1", "#1E90FF", "#00BFFF", "#87CEEB"],  # Blues - mais vibrantes
-    "Quadapt_MoSS": ["#FF0000", "#DC143C", "#FF1493", "#FF69B4", "#FFB6C1"],  # Reds/Pinks - mais contrastantes
+    "None": ["#6B7280", "#9CA3AF", "#D1D5DB", "#4B5563", "#E5E7EB"],
+    "Quadapt": ["#0047AB", "#0057D9", "#1D4ED8", "#2563EB", "#3B82F6"],  # Azul
     "Quadapt_MvN": ["#00FF00", "#32CD32", "#00FA9A", "#90EE90", "#98FB98"],  # Greens - mais saturados
     "Quadapt_Dir": ["#8B00FF", "#9400D3", "#BA55D3", "#DA70D6", "#EE82EE"],  # Purples - mais intensos
-    "QuadaptNew": ["#8B4513", "#D2691E", "#CD853F", "#DEB887", "#F5DEB3"],  # Browns - mais distintos
+    "Quadapt_New": ["#B91C1C", "#DC2626", "#EF4444", "#F87171", "#FCA5A5"],  # Vermelho
 }
 
 legend_text = {
-    "None": "Quadapt_Variant: None (azul)",
-    "Quadapt_MoSS": "Quadapt_Variant: MoSS (vermelho)",
+    "None": "Quadapt_Variant: None (cinza)",
+    "Quadapt": "Quadapt_Variant: Quadapt (azul)",
     "Quadapt_MvN": "Quadapt_Variant: MvN (verde)",
     "Quadapt_Dir": "Quadapt_Variant: Dir (roxo)",
-    "QuadaptNew": "Quadapt_Variant: New (marrom)",
+    "Quadapt_New": "Quadapt_Variant: New (vermelho)",
 }
 
 st.markdown("### Método (Quadapt_Variant) e Cores")
@@ -298,6 +303,13 @@ def downsample(df, key_col="Method", x_col="m_test"):
 
 filtered_results_ds = downsample(filtered_results)
 
+grid_m_train_values = [0.25, 0.5, 0.75]
+grid_moss_test_variants = ["MoSS", "MoSS_MN", "MoSS_Dir"]
+
+for required_variant in grid_moss_test_variants:
+    if required_variant not in moss_test_opts:
+        st.warning(f"MoSS_Test_Variant '{required_variant}' não encontrado nos dados.")
+
 # ============================
 # 6) Cores e símbolos
 # ============================
@@ -327,51 +339,94 @@ if not filtered_results_ds.empty:
 # ============================
 # 7) Gráficos
 # ============================
-if not filtered_results_ds.empty or (cc_df is not None and not cc_df.empty):
-    # figura base com os métodos normais
-    if not filtered_results_ds.empty:
-        fig_mae = px.line(
-            filtered_results_ds,
-            x="m_test",
-            y="MAE",
-            color="Method",
-            symbol="Method",
-            markers=True,
-            color_discrete_map=color_discrete_map,
-            symbol_map=symbol_map,
-        )
-    else:
-        fig_mae = go.Figure()
+st.markdown("### MAE por `m_test`: grade 3x3 (colunas = `m_train`, linhas = `MoSS_Test_Variant`)")
 
-    # Linha especial para CC: cor fixa e grossa
-    if cc_df is not None and not cc_df.empty:
-        cc_trace = go.Scatter(
-            x=cc_df["m_test"],
-            y=cc_df["MAE"],
-            mode="lines+markers",
-            name="CC (baseline)",          # aparece na legenda
-            line=dict(color="#FF7F0E",     # laranja forte
-                        width=6),            # linha bem grossa
-            marker=dict(size=11,
-                        symbol="circle",
-                        color="#FF7F0E",
-                        line=dict(color="black", width=1)),
-            showlegend=True
-        )
-        fig_mae.add_trace(cc_trace)
+subplot_titles = []
+for moss_test_variant in grid_moss_test_variants:
+    row_name = moss_test_variant.replace("MoSS_MN", "MoSS normal").replace("MoSS_Dir", "MoSS Dirichlet")
+    for m_train_grid in grid_m_train_values:
+        subplot_titles.append(f"{row_name} | m_train={m_train_grid}")
 
-    fig_mae.update_traces(marker=dict(size=10))
-    fig_mae.update_yaxes(range=[0, 0.45])
-    fig_mae.add_vline(
-        x=selected_m_train,
-        line_dash="dot",
-        line_color="white",
-        line_width=5,
-        opacity=0.8,
-    )
-    st.plotly_chart(fig_mae, width="stretch")
-else:
-    st.warning("No data for the selected filters.")
+fig_grid = make_subplots(
+    rows=3,
+    cols=3,
+    subplot_titles=subplot_titles,
+    horizontal_spacing=0.04,
+    vertical_spacing=0.08,
+)
+
+legend_methods_shown = set()
+
+for row_idx, moss_test_variant in enumerate(grid_moss_test_variants, start=1):
+    for col_idx, m_train_grid in enumerate(grid_m_train_values, start=1):
+        cell_mask = (
+            (np.abs(results_agg["m_train"] - m_train_grid) < eps)
+            & (results_agg["MoSS_Train_Variant"] == selected_moss_train_variant)
+            & (results_agg["MoSS_Test_Variant"] == moss_test_variant)
+            & (results_agg["Quadapt_Variant"].isin(selected_methods))
+            & (results_agg["Quantifier"].isin(selected_quantifiers))
+        )
+        cell_df = results_agg[cell_mask].copy()
+
+        cell_cc = cell_df[cell_df["Quantifier"] == "CC"].copy()
+        if not cell_cc.empty:
+            cell_cc = cell_cc[cell_cc["Quadapt_Variant"] == "None"].copy()
+        cell_df = cell_df[cell_df["Quantifier"] != "CC"].copy()
+
+        if not cell_df.empty:
+            cell_df["Method"] = cell_df.apply(create_method_label, axis=1)
+            cell_df = downsample(cell_df)
+
+            for method in sorted(cell_df["Method"].unique()):
+                sub = cell_df[cell_df["Method"] == method].sort_values("m_test")
+                method_color = color_discrete_map.get(method, "#111827")
+                q = sub["Quantifier"].iloc[0]
+                method_symbol = quantifier_to_marker.get(q, "circle")
+                show_legend = method not in legend_methods_shown
+                fig_grid.add_trace(
+                    go.Scatter(
+                        x=sub["m_test"],
+                        y=sub["MAE"],
+                        mode="lines+markers",
+                        name=method,
+                        legendgroup=method,
+                        showlegend=show_legend,
+                        line=dict(color=method_color, width=2),
+                        marker=dict(symbol=method_symbol, size=7),
+                    ),
+                    row=row_idx,
+                    col=col_idx,
+                )
+                if show_legend:
+                    legend_methods_shown.add(method)
+
+        if not cell_cc.empty:
+            show_legend_cc = "CC (baseline)" not in legend_methods_shown
+            fig_grid.add_trace(
+                go.Scatter(
+                    x=cell_cc["m_test"],
+                    y=cell_cc["MAE"],
+                    mode="lines+markers",
+                    name="CC (baseline)",
+                    legendgroup="CC (baseline)",
+                    showlegend=show_legend_cc,
+                    line=dict(color="#FF7F0E", width=4),
+                    marker=dict(size=8, symbol="circle", color="#FF7F0E"),
+                ),
+                row=row_idx,
+                col=col_idx,
+            )
+            if show_legend_cc:
+                legend_methods_shown.add("CC (baseline)")
+
+        fig_grid.update_yaxes(range=[0, 0.45], row=row_idx, col=col_idx)
+
+fig_grid.update_layout(
+    height=1100,
+    title="Comparação de métodos por MoSS_Test_Variant e m_train",
+    legend_title="Method",
+)
+st.plotly_chart(fig_grid, width="stretch")
 
 filtered_for_box = filtered_results_raw[filtered_results_raw["m_test"] <= selected_m_train]
 
