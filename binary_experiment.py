@@ -15,14 +15,30 @@ def run_experiment(m_train,
                    moss_train_variant,
                    moss_test_variant,
                    moss_train_variant_name,
-                   moss_test_variant_name):
+                   moss_test_variant_name,
+                   random_state=None,
+                   strict=False,
+                   quadapt_variants=None):
+    """Run one grid cell of the sweep and return its runs as a frame.
+
+    The last three arguments exist for the test suite and all default to the
+    sweep's own behaviour: ``random_state=None`` draws from OS entropy as
+    before, ``strict=False`` keeps the caught-and-logged error handling, and
+    ``quadapt_variants=None`` uses the full registry. Note that seeding here
+    reaches only this experiment's own data simulators — the method
+    simulators inside a meta-quantifier draw independently (ADR-0004).
+    """
 
     results = []
+    rng = np.random.default_rng(random_state)
+    if quadapt_variants is None:
+        quadapt_variants = QUADAPT_VARIANTS
 
     train_scores, train_labels = moss_train_variant(
         n=TRAIN_SIZE,
         alpha=[0.5, 0.5],
         merging_factor=m_train,
+        random_state=rng,
     )
 
     for i in range(N_REPETITIONS):
@@ -30,9 +46,10 @@ def run_experiment(m_train,
             n=TEST_SIZE,
             alpha=[1 - alpha, alpha],
             merging_factor=m_test,
+            random_state=rng,
         )
 
-        for quadapt_variant_name, quadapt_variant in QUADAPT_VARIANTS.items():
+        for quadapt_variant_name, quadapt_variant in quadapt_variants.items():
             for qtf_name, quantifier in QUANTIFIERS.items():
                 try:
                     if qtf_name == "CC":
@@ -58,6 +75,8 @@ def run_experiment(m_train,
                         )
                         prediction = list(prediction.values())[1]
                 except Exception as e:
+                    if strict:
+                        raise
                     import traceback
                     print(f"Error in {qtf_name} with {quadapt_variant_name}: {e}")
                     print(
