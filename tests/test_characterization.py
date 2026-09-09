@@ -1,7 +1,8 @@
-"""Replay the golden record captured on mlquantify 0.2.0.
+"""Replay the golden record of plain-quantifier runs.
 
-If this fails after a library upgrade, a run that should have been untouched
-changed. That is a finding, not a fixture to refresh.
+Captured on the pinned mlquantify (see ADR-0001 and ADR-0006). If this fails,
+a run that should have been untouched changed. That is a finding, not a
+fixture to refresh.
 """
 
 import pandas as pd

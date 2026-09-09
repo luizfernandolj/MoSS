@@ -113,6 +113,9 @@ def load_results():
         "Quantifier": "category",
     }
 
+    # These files were moved to results/void-mlquantify-0.2.0/ and are void
+    # under ADR-0001 — do not repoint this at them. The paths are left as they
+    # are until the sweep is re-run on 0.5.1 and writes results here again.
     results1 = pd.read_csv("results/results_part1.csv", usecols=usecols, dtype=dtype)
     results2 = pd.read_csv("results/results_part2.csv", usecols=usecols, dtype=dtype)
     results3 = pd.read_csv("results/results_part3.csv", usecols=usecols, dtype=dtype)

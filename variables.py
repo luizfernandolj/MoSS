@@ -13,9 +13,8 @@ from utils.quadapt_variant import (
     QuadaptMoSS,
     QuadaptMoSS_MN,
     QuadaptMoSS_Dir,
-    QuadaptNew
 )
-from mlquantify.adjust_counting import (
+from mlquantify.counting import (
     TAC,
     TX,
     T50,
@@ -24,11 +23,11 @@ from mlquantify.adjust_counting import (
     MS2,
     CC
 )
-from mlquantify.mixture import (
+from mlquantify.matching import (
     DyS,
     HDy,
     SORD,
-    SMM    
+    SMM
 )
 from mlquantify.metrics import MAE
 from mlquantify.meta import QuaDapt
@@ -46,7 +45,8 @@ QUADAPT_VARIANTS = { # Variants of MoSS for QuaDapt Framework]
     "Quadapt_MoSS": QuadaptMoSS,
     "Quadapt_MvN": QuadaptMoSS_MN,
     "Quadapt_Dir": QuadaptMoSS_Dir,
-    "QuadaptNew": QuadaptNew,
+    # "QuadaptNew" is absent on purpose: it calls a mixture-search helper that
+    # 0.5.1 removed. Its absence from the results is not a finding — ADR-0007.
     "None": None
 }
 QUANTIFIERS = { # Quantifiers for QuaDapt Framework

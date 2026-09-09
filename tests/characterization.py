@@ -1,18 +1,24 @@
 """The characterization grid and its golden record of plain-quantifier runs.
 
-The fixture this module writes was generated on ``mlquantify==0.2.0``, before
-the upgrade to 0.5.1. Runs that use no meta-quantifier take a code path the
-upgrade does not touch, so they must reproduce exactly afterwards; that is the
-whole claim the port rests on. Meta-quantifier runs are excluded by
-construction — their behaviour legitimately changes, and freezing it here
-would enshrine the defect being fixed (ADR-0001).
+The fixture is a golden record of runs that use no meta-quantifier. Meta-
+quantifier runs are excluded by construction: their behaviour legitimately
+changed across the 0.2.0 → 0.5.1 upgrade, and freezing it here would enshrine
+the defect being fixed (ADR-0001).
+
+It was first captured on ``mlquantify==0.2.0`` to prove the upgrade left plain
+runs untouched. It did not: DyS and HDy changed, because 0.5.1 turns off the
+histogram smoothing 0.2.0 applied unconditionally and stops aggregating DyS
+over bin sizes by median. ADR-0006 records the decision to accept the new
+defaults, and the fixture was re-captured on 0.5.1. The 0.2.0 record and the
+measured deltas are in commit 58102cc and ADR-0006 respectively.
+
+The fixture now guards the *current* library against future drift rather than
+proving anything about the upgrade. If it fails, a plain run changed — treat
+that as a finding, not as a fixture to refresh.
 
 Regenerate with::
 
     .venv/bin/python -m tests.characterization
-
-Regenerating on a version other than 0.2.0 destroys the baseline, so only do
-it deliberately.
 """
 
 from pathlib import Path
@@ -25,8 +31,8 @@ from variables import MOSS_VARIANTS
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "plain_quantifier_runs.csv"
 
 #: Fixed so the experiment's own data simulators are reproducible. The method
-#: simulators inside a meta-quantifier are not seedable from here, which is
-#: one more reason the fixture covers plain runs only.
+#: simulators inside a meta-quantifier are not seedable from here (ADR-0004),
+#: which is one more reason the fixture covers plain runs only.
 SEED = 20260908
 
 #: Only the sweep entry's "no meta-quantifier" arm.

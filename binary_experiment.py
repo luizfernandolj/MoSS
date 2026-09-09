@@ -55,25 +55,16 @@ def run_experiment(m_train,
                     if qtf_name == "CC":
                         prediction = quantifier().aggregate(test_scores)[1]
                     elif quadapt_variant_name != "None":
-                        if quadapt_variant_name == "QuadaptNew":
-                            prediction = quadapt_variant(quantifier()).aggregate(
-                                test_scores,
-                                train_labels,
-                                train_scores
-                            )
-                        else:
-                            prediction = quadapt_variant(quantifier()).aggregate(
-                                test_scores,
-                                train_labels
-                            )
-                        prediction = list(prediction.values())[1]
+                        prediction = quadapt_variant(quantifier()).aggregate(
+                            test_scores,
+                            train_labels
+                        )[1]
                     else:
                         prediction = quantifier().aggregate(
                             test_scores,
                             train_scores,
                             train_labels,
-                        )
-                        prediction = list(prediction.values())[1]
+                        )[1]
                 except Exception as e:
                     if strict:
                         raise
@@ -91,6 +82,7 @@ def run_experiment(m_train,
                     traceback.print_exc()
            
 
+                # Still a mapping in 0.5.1, unlike aggregate's return above.
                 real_prev = get_prev_from_labels(test_labels)
                 real_prev = list(real_prev.values())[1]
                 mae = np.mean(np.abs(prediction - real_prev))
