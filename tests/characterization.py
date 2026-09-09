@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 
 from binary_experiment import run_experiment
-from variables import MOSS_VARIANTS
+from variables import DATA_SIMULATORS
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "plain_quantifier_runs.csv"
 
@@ -71,10 +71,10 @@ def cells():
                         "m_train": m_train,
                         "m_test": m_test,
                         "alpha": alpha,
-                        "moss_train_variant": MOSS_VARIANTS[train_name],
-                        "moss_test_variant": MOSS_VARIANTS[test_name],
-                        "moss_train_variant_name": train_name,
-                        "moss_test_variant_name": test_name,
+                        "train_simulator": DATA_SIMULATORS[train_name],
+                        "test_simulator": DATA_SIMULATORS[test_name],
+                        "train_simulator_name": train_name,
+                        "test_simulator_name": test_name,
                     }
 
 
@@ -85,7 +85,7 @@ def run_grid():
             **cell,
             random_state=SEED,
             strict=True,
-            quadapt_variants=PLAIN_ONLY,
+            method_simulators=PLAIN_ONLY,
         )
         for cell in cells()
     ]

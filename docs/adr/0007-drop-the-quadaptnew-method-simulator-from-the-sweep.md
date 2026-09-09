@@ -21,3 +21,6 @@ rewrites anyway. Its results were void under ADR-0001 regardless.
   follow-up spec.
 - Restoring the simulator means rewriting `best_mixture` against 0.5.1's API,
   which belongs with that rewrite and not with the port.
+- The registry named `QUADAPT_VARIANTS` above is now `METHOD_SIMULATORS`
+  (ADR-0008). The decision this ADR records is unchanged: the class is still
+  absent from it.

@@ -9,8 +9,9 @@ from a reference simulated at that factor.
 Why this test does not go through the sweep entry point
 -------------------------------------------------------
 It cannot, yet. The sweep's meta-quantifier arms use this project's own
-simulator overrides, which draw from ``np.random.default_rng(None)`` and are
-not seedable (ADR-0004). Those unseeded draws make estimates differ between
+simulators, which honour a ``random_state`` — but mlquantify calls its ``MoSS``
+seam without one, so the draws are unseeded all the same (ADR-0004). Those
+unseeded draws make estimates differ between
 base quantifiers *even under the defect* — measured on a fixed cell, the
 per-run spread across base quantifiers is indistinguishable between 0.2.0 and
 0.5.1 (medians 0.258 and 0.264). Any assertion at the sweep seam therefore
@@ -19,13 +20,14 @@ passes on both versions and guards nothing.
 Held fixed, the two versions separate completely: 0.2.0 returns one identical
 estimate for all ten base quantifiers, 0.5.1 returns a spread of estimates.
 mlquantify's own ``QuaDapt.MoSS`` draws from the legacy global ``np.random``,
-so seeding it is possible here even though seeding the project's overrides is
-not. That is why this test wraps the library's meta-quantifier directly. Move
-it onto the sweep seam once ADR-0004's seeding lands.
+so seeding it is possible here even though reaching the project's simulators
+through the library's call is not. That is why this test wraps the library's
+meta-quantifier directly. Move it onto the sweep seam once ADR-0004's seeding
+lands upstream.
 
 Two limits of that workaround, both consequences of the same gap. It guards
 the library pin rather than the sweep, so a regression introduced in this
-project's own overrides or in QUADAPT_VARIANTS would not be caught here — the
+project's own simulators or in METHOD_SIMULATORS would not be caught here — the
 smoke test below is the only thing standing under those. And it draws a larger
 bag than the sweep's TEST_SIZE of 100, deliberately: at 100 the counting
 quantifiers quantise to 0.01, the same order as MIN_SPREAD, and the pass/fail
@@ -38,8 +40,7 @@ import pytest
 from mlquantify.meta import QuaDapt
 
 from binary_experiment import run_experiment
-from utils.moss import MoSS
-from variables import MOSS_VARIANTS, QUADAPT_VARIANTS, QUANTIFIERS
+from variables import DATA_SIMULATORS, METHOD_SIMULATORS, QUANTIFIERS
 
 #: Controls mlquantify's internal MoSS reference draw, so the only thing
 #: varying between the estimates compared below is the base quantifier.
@@ -58,21 +59,22 @@ CELL = {
     "m_train": 0.2,
     "m_test": 0.5,
     "alpha": 0.3,
-    "moss_train_variant": MOSS_VARIANTS["MoSS"],
-    "moss_test_variant": MOSS_VARIANTS["MoSS"],
-    "moss_train_variant_name": "MoSS",
-    "moss_test_variant_name": "MoSS",
+    "train_simulator": DATA_SIMULATORS["MoSS"],
+    "test_simulator": DATA_SIMULATORS["MoSS"],
+    "train_simulator_name": "MoSS",
+    "test_simulator_name": "MoSS",
 }
 
 
 @pytest.fixture(scope="module")
 def fixed_cell():
     """One cell of simulated scores, large enough not to quantise estimates."""
+    simulate = DATA_SIMULATORS["MoSS"]
     rng = np.random.default_rng(20260908)
-    train_scores, train_labels = MoSS(
+    train_scores, train_labels = simulate(
         n=2000, alpha=[0.5, 0.5], merging_factor=0.2, random_state=rng
     )
-    test_scores, _ = MoSS(
+    test_scores, _ = simulate(
         n=1000, alpha=[0.7, 0.3], merging_factor=0.5, random_state=rng
     )
     return test_scores, train_labels
@@ -103,5 +105,5 @@ def test_sweep_completes_for_every_method_and_base_quantifier():
     runs = run_experiment(**CELL, random_state=0, strict=True)
 
     assert set(runs["Quantifier"]) == set(QUANTIFIERS)
-    assert set(runs["Quadapt_Variant"]) == set(QUADAPT_VARIANTS)
+    assert set(runs["Quadapt_Variant"]) == set(METHOD_SIMULATORS)
     assert np.isfinite(runs["MAE"]).all()

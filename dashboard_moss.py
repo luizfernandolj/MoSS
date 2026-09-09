@@ -2,7 +2,7 @@ import streamlit as st
 import plotly.express as px
 import numpy as np
 import ast
-from utils.moss import MoSS_MN, MoSS_Dir, MoSS
+from utils.simulators import DirichletSimulator, MVNSimulator, UniformSimulator
 
 # ============================================================
 # Função de plotagem com Plotly Express (Reutilizada)
@@ -113,7 +113,7 @@ try:
         merging_factor = st.sidebar.slider("Merging Factor (m)", 0.0, 1.0, 0.1, step=0.05)
         
         # Executar
-        X, y = MoSS(n=n_samples, alpha=alpha, merging_factor=merging_factor)
+        X, y = UniformSimulator()(n=n_samples, alpha=alpha, merging_factor=merging_factor)
         title = f"MoSS Binário (n={n_samples}, m={merging_factor}, alpha={alpha})"
         
     else: # MoSS_MN ou MoSS_Dir
@@ -155,14 +155,16 @@ try:
                 st.error("Erro: Certifique-se de usar apenas números separados por vírgula para alpha.")
                 st.stop()
         else:
-            alpha = None # Uniforme
+            # A prevalência é sempre explícita: o simulador toma dela o número
+            # de classes, e não de um parâmetro separado que possa discordar.
+            alpha = [1 / n_classes] * n_classes
 
         # Executar
         if variant == "MoSS_MN (Multivariate Normal)":
-            X, y = MoSS_MN(n=n_samples, n_classes=n_classes, alpha=alpha, merging_factor=merging_factor)
+            X, y = MVNSimulator()(n=n_samples, alpha=alpha, merging_factor=merging_factor)
             title = f"MoSS MN (n={n_samples}, m={merging_factor})"
         else:
-            X, y = MoSS_Dir(n=n_samples, n_classes=n_classes, alpha=alpha, merging_factor=merging_factor)
+            X, y = DirichletSimulator()(n=n_samples, alpha=alpha, merging_factor=merging_factor)
             title = f"MoSS Dirichlet (n={n_samples}, m={merging_factor})"
 
     # ============================================================

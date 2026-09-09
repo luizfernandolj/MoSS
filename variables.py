@@ -3,16 +3,10 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from utils.moss import (
-    MoSS_MN, 
-    MoSS_Dir, 
-    MoSS
-)
-
-from utils.quadapt_variant import (
-    QuadaptMoSS,
-    QuadaptMoSS_MN,
-    QuadaptMoSS_Dir,
+from utils.simulators import (
+    DirichletSimulator,
+    MVNSimulator,
+    UniformSimulator,
 )
 from mlquantify.counting import (
     TAC,
@@ -36,15 +30,26 @@ from mlquantify.utils import get_prev_from_labels
 
 
 
-MOSS_VARIANTS = {
-    "MoSS_Dir": MoSS_Dir,
-    "MoSS": MoSS,
-    "MoSS_MN": MoSS_MN,
+# The same three simulators appear in both registries, in their two roles
+# (CONTEXT.md). The keys are not names — they are the values written to the
+# ``MoSS_Train_Variant``, ``MoSS_Test_Variant`` and ``Quadapt_Variant`` columns
+# of every result file and of the golden record, so they stay as they are even
+# where the glossary would have them read differently.
+
+#: Score simulators in their data role: the source of the sweep's own scores.
+DATA_SIMULATORS = {
+    "MoSS_Dir": DirichletSimulator(),
+    "MoSS": UniformSimulator(),
+    "MoSS_MN": MVNSimulator(),
 }
-QUADAPT_VARIANTS = { # Variants of MoSS for QuaDapt Framework]
-    "Quadapt_MoSS": QuadaptMoSS,
-    "Quadapt_MvN": QuadaptMoSS_MN,
-    "Quadapt_Dir": QuadaptMoSS_Dir,
+
+#: Score simulators in their method role: what a meta-quantifier draws its
+#: candidate reference sets with. ``None`` is the arm that uses no
+#: meta-quantifier at all.
+METHOD_SIMULATORS = {
+    "Quadapt_MoSS": UniformSimulator(),
+    "Quadapt_MvN": MVNSimulator(),
+    "Quadapt_Dir": DirichletSimulator(),
     # "QuadaptNew" is absent on purpose: it calls a mixture-search helper that
     # 0.5.1 removed. Its absence from the results is not a finding — ADR-0007.
     "None": None

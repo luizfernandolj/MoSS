@@ -7,34 +7,35 @@ warnings.filterwarnings("ignore")
 import pandas as pd
 from joblib import Parallel, delayed
 from tqdm import tqdm
+from utils.meta_quantifier import QuaDaptWithSimulator
 from variables import *
 
 def run_experiment(m_train,
                    m_test,
                    alpha,
-                   moss_train_variant,
-                   moss_test_variant,
-                   moss_train_variant_name,
-                   moss_test_variant_name,
+                   train_simulator,
+                   test_simulator,
+                   train_simulator_name,
+                   test_simulator_name,
                    random_state=None,
                    strict=False,
-                   quadapt_variants=None):
+                   method_simulators=None):
     """Run one grid cell of the sweep and return its runs as a frame.
 
     The last three arguments exist for the test suite and all default to the
     sweep's own behaviour: ``random_state=None`` draws from OS entropy as
     before, ``strict=False`` keeps the caught-and-logged error handling, and
-    ``quadapt_variants=None`` uses the full registry. Note that seeding here
+    ``method_simulators=None`` uses the full registry. Note that seeding here
     reaches only this experiment's own data simulators — the method
     simulators inside a meta-quantifier draw independently (ADR-0004).
     """
 
     results = []
     rng = np.random.default_rng(random_state)
-    if quadapt_variants is None:
-        quadapt_variants = QUADAPT_VARIANTS
+    if method_simulators is None:
+        method_simulators = METHOD_SIMULATORS
 
-    train_scores, train_labels = moss_train_variant(
+    train_scores, train_labels = train_simulator(
         n=TRAIN_SIZE,
         alpha=[0.5, 0.5],
         merging_factor=m_train,
@@ -42,20 +43,23 @@ def run_experiment(m_train,
     )
 
     for i in range(N_REPETITIONS):
-        test_scores, test_labels = moss_test_variant(
+        test_scores, test_labels = test_simulator(
             n=TEST_SIZE,
             alpha=[1 - alpha, alpha],
             merging_factor=m_test,
             random_state=rng,
         )
 
-        for quadapt_variant_name, quadapt_variant in quadapt_variants.items():
+        for method_simulator_name, method_simulator in method_simulators.items():
             for qtf_name, quantifier in QUANTIFIERS.items():
                 try:
                     if qtf_name == "CC":
                         prediction = quantifier().aggregate(test_scores)[1]
-                    elif quadapt_variant_name != "None":
-                        prediction = quadapt_variant(quantifier()).aggregate(
+                    elif method_simulator_name != "None":
+                        prediction = QuaDaptWithSimulator(
+                            quantifier(),
+                            method_simulator,
+                        ).aggregate(
                             test_scores,
                             train_labels
                         )[1]
@@ -69,15 +73,15 @@ def run_experiment(m_train,
                     if strict:
                         raise
                     import traceback
-                    print(f"Error in {qtf_name} with {quadapt_variant_name}: {e}")
+                    print(f"Error in {qtf_name} with {method_simulator_name}: {e}")
                     print(
-                        "mtr:", m_train, 
-                        "\nmtest:", m_test, 
-                        "\nalpha:", alpha, 
-                        "\nqtf:", qtf_name, 
-                        "\nquadapt:", quadapt_variant_name,
-                        "\nmoss_train_variant:", moss_train_variant_name,
-                        "\nmoss_test_variant:", moss_test_variant_name
+                        "mtr:", m_train,
+                        "\nmtest:", m_test,
+                        "\nalpha:", alpha,
+                        "\nqtf:", qtf_name,
+                        "\nmethod simulator:", method_simulator_name,
+                        "\ntrain simulator:", train_simulator_name,
+                        "\ntest simulator:", test_simulator_name
                     )
                     traceback.print_exc()
            
@@ -87,11 +91,14 @@ def run_experiment(m_train,
                 real_prev = list(real_prev.values())[1]
                 mae = np.mean(np.abs(prediction - real_prev))
 
+                # The column names are frozen by the golden record and by every
+                # result file already written; the registry keys they take
+                # their values from are frozen with them. See variables.py.
                 results.append({
                     "Quantifier": qtf_name,
-                    "Quadapt_Variant": quadapt_variant_name,
-                    "MoSS_Test_Variant": moss_test_variant_name,
-                    "MoSS_Train_Variant": moss_train_variant_name,
+                    "Quadapt_Variant": method_simulator_name,
+                    "MoSS_Test_Variant": test_simulator_name,
+                    "MoSS_Train_Variant": train_simulator_name,
                     "MAE": mae,
                     "m_test": m_test,
                     "m_train": m_train,
@@ -104,10 +111,10 @@ def run_experiment(m_train,
 
 def main(results_path):
 
-    # 1) gerar TODAS as combinações de parâmetros, incluindo os nomes/variantes do MoSS
+    # 1) gerar TODAS as combinações de parâmetros, incluindo os simuladores de dados
     param_grid = []
-    for moss_train_variant_name, moss_train_variant in MOSS_VARIANTS.items():
-        for moss_test_variant_name, moss_test_variant in MOSS_VARIANTS.items():
+    for train_simulator_name, train_simulator in DATA_SIMULATORS.items():
+        for test_simulator_name, test_simulator in DATA_SIMULATORS.items():
             for m_train in MERGING_FACTORS:
                 for m_test in MERGING_FACTORS:
                     for alpha in ALPHAS:
@@ -115,10 +122,10 @@ def main(results_path):
                             m_train,
                             m_test,
                             alpha,
-                            moss_train_variant,
-                            moss_test_variant,
-                            moss_train_variant_name,
-                            moss_test_variant_name,
+                            train_simulator,
+                            test_simulator,
+                            train_simulator_name,
+                            test_simulator_name,
                         ))
 
     # 2) rodar em paralelo com joblib + tqdm
