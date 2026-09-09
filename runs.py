@@ -20,11 +20,15 @@ The previous single CSV reached 291 MB, was split three ways to clear a
 hosting file-size limit, and that split then leaked into every reader — which
 is how the readers drifted apart in the first place.
 
-Three parts of this module are deliberately ahead of their callers, and are
-covered by tests alone until those land: the real-data table (ADR-0005, built
-by #10), and ``SIMULATOR_NAMES`` / ``METHOD_SIMULATOR_NAMES``, which translate
-the sweep's registry keys into the vocabulary below and are used when the
-sweep starts writing through here (#6).
+The vocabulary below is not a translation of the sweep's — it *is* the sweep's.
+``sweep.py`` registers its simulators and quantifiers under these names, so
+there is no map between the two that could go stale, and a rename here reaches
+the sweep rather than leaving it spelling the old name. The two maps that used
+to bridge them are gone; the last thing written in the historical spelling is
+the frozen characterization record, which translates itself on the way in.
+
+One part of this module is deliberately ahead of its callers and is covered by
+tests alone until that lands: the real-data table (ADR-0005, built by #10).
 
 Prevalences are scalars for binary runs and vectors for multiclass ones, in
 the same columns. That is not a schema change (ADR-0003), and
@@ -57,8 +61,8 @@ SIMULATORS = (UNIFORM, MVN, DIRICHLET)
 NO_METHOD_SIMULATOR = "none"
 METHOD_SIMULATORS = SIMULATORS + (NO_METHOD_SIMULATOR,)
 
-#: Every base quantifier the sweep runs. ``tests/test_runs.py`` asserts this
-#: matches ``variables.QUANTIFIERS`` exactly, so adding one there without
+#: Every base quantifier the sweep runs. ``tests/test_sweep.py`` asserts this
+#: matches ``sweep.BASE_QUANTIFIERS`` exactly, so adding one there without
 #: adding it here fails rather than silently producing unreadable runs.
 BASE_QUANTIFIERS = (
     "DyS",
@@ -73,20 +77,6 @@ BASE_QUANTIFIERS = (
     "TMS2",
     "CC",
 )
-
-#: The sweep's registries still key their simulators by the historical
-#: spellings, which ADR-0008 kept because they were the values written to the
-#: result columns. Here is where that stops being true: these two maps are the
-#: only place those keys survive, and runs on disk carry the canonical names
-#: above. Both are asserted complete against the registries, so a rename there
-#: cannot leave a stale key behind.
-SIMULATOR_NAMES = {"MoSS": UNIFORM, "MoSS_MN": MVN, "MoSS_Dir": DIRICHLET}
-METHOD_SIMULATOR_NAMES = {
-    "Quadapt_MoSS": UNIFORM,
-    "Quadapt_MvN": MVN,
-    "Quadapt_Dir": DIRICHLET,
-    "None": NO_METHOD_SIMULATOR,
-}
 
 #: How a simulator is spelled in a figure legend.
 SIMULATOR_LABELS = {UNIFORM: "Uniform", MVN: "MVN", DIRICHLET: "Dirichlet"}
@@ -148,6 +138,18 @@ def columns_for(kind):
         raise ValueError(f"unknown run kind {kind!r}; expected one of {KINDS}") from None
 
 
+def reject_unknown(what, named, known):
+    """Refuse anything outside the vocabulary, naming what was wrong.
+
+    Public because the sweep checks its spec against this module's vocabulary
+    before running, and a second copy of the rule would be a second thing to
+    keep in step with the first.
+    """
+    unknown = sorted(set(named) - set(known))
+    if unknown:
+        raise ValueError(f"unknown {what} {unknown}; expected one of {tuple(known)}")
+
+
 def save(runs, kind, root=ROOT):
     """Write a table of runs, rejecting anything a reader would misread.
 
@@ -161,13 +163,8 @@ def save(runs, kind, root=ROOT):
             f"got {tuple(runs.columns)}"
         )
     for column, vocabulary in _VOCABULARIES.items():
-        if column not in expected:
-            continue
-        unknown = sorted(set(runs[column].dropna().unique()) - set(vocabulary))
-        if unknown:
-            raise ValueError(
-                f"unknown {column} {unknown}; expected one of {vocabulary}"
-            )
+        if column in expected:
+            reject_unknown(column, runs[column].dropna().unique(), vocabulary)
 
     path = Path(root) / _FILES[kind]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -186,9 +183,8 @@ def load(kind, root=ROOT, columns=None):
     if not path.exists():
         raise FileNotFoundError(
             f"no {kind} runs under {root}. Every result file predating the "
-            "0.5.1 port is void (ADR-0001), and the sweep does not yet write "
-            "through this module — that lands with the sweep seam (#6), and "
-            "the re-run itself with #9."
+            "0.5.1 port is void (ADR-0001); produce these with "
+            "`.venv/bin/python -m sweep` (#9)."
         )
     return pd.read_parquet(path, columns=columns)
 

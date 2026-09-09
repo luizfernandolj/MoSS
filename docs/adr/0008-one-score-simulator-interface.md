@@ -42,19 +42,17 @@ now, on all three implementations.
   pass the positive class's share as a scalar and let the simulator read it
   into a vector, rather than writing `[1 - alpha, alpha]` at the call site —
   that spelling is what the reshaping used to look like.
-- The registries in `variables.py` are `DATA_SIMULATORS` and
-  `METHOD_SIMULATORS`, named for the two roles in CONTEXT.md rather than for
-  the classes they used to hold. The result columns they feed —
-  `MoSS_Train_Variant`, `MoSS_Test_Variant`, `Quadapt_Variant` — and the
-  registry keys that supply their values are frozen by the golden record and by
-  the result files already written, so they keep their old spelling. **This is
-  now true only of the sweep's own frame.** The runs module (#5) gives stored
-  runs a schema of their own, in the vocabulary of CONTEXT.md, and translates
-  the registry keys into it through `runs.SIMULATOR_NAMES` and
-  `runs.METHOD_SIMULATOR_NAMES`. What stays frozen is the frame
-  `run_experiment` returns and the golden record that replays it; the sweep
-  starts writing through the module, and those columns go, with the sweep seam
-  (#6).
+- The registries are `DATA_SIMULATORS` and `METHOD_SIMULATORS`, named for the
+  two roles in CONTEXT.md rather than for the classes they used to hold.
+  **Their keys no longer carry the historical spelling.** This ADR originally
+  kept `MoSS`, `MoSS_MN`, `Quadapt_Dir` and the rest because they were the
+  values written to the result columns; ADR-0003 then gave stored runs a schema
+  of their own and the keys were translated on the way out through
+  `runs.SIMULATOR_NAMES` and `runs.METHOD_SIMULATOR_NAMES`. ADR-0009 removes
+  the translation instead: the registries moved to `sweep.py` and are keyed by
+  the names `runs` stores, so no map exists between the two to go stale. The
+  old spellings survive only in `tests/characterization.py`, which translates
+  the frozen golden record forward on the way in.
 - The simulators accept and honour a `random_state`, where the old overrides
   accepted one and dropped it. What remains of ADR-0004's gap is entirely
   upstream: mlquantify calls its `MoSS` seam without a seed, so the draws

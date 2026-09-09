@@ -12,11 +12,6 @@ import pandas as pd
 import pytest
 
 import runs
-from variables import (
-    DATA_SIMULATORS as SWEEP_DATA_SIMULATORS,
-    METHOD_SIMULATORS as SWEEP_METHOD_SIMULATORS,
-    QUANTIFIERS,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -272,21 +267,18 @@ def test_absolute_error_averages_over_the_classes_of_a_prevalence_vector():
 # ---------------------------------------------------------------------------
 # The vocabulary is the sweep's, not a second copy of it
 # ---------------------------------------------------------------------------
+#
+# There is no longer a map between the two to keep complete: the sweep
+# registers its simulators and quantifiers under these names. That the two
+# agree is asserted in ``tests/test_sweep.py``, against the spec that runs.
 
 
-def test_every_base_quantifier_the_sweep_runs_is_in_the_vocabulary():
-    assert set(runs.BASE_QUANTIFIERS) == set(QUANTIFIERS)
+def test_the_baseline_quantifier_is_one_the_vocabulary_knows():
+    assert runs.BASELINE_QUANTIFIER in runs.BASE_QUANTIFIERS
 
 
-def test_every_method_simulator_arm_of_the_sweep_has_a_canonical_name():
-    assert set(runs.METHOD_SIMULATOR_NAMES) == set(SWEEP_METHOD_SIMULATORS)
-    assert set(runs.METHOD_SIMULATOR_NAMES.values()) == set(runs.METHOD_SIMULATORS)
-
-
-def test_every_data_simulator_the_sweep_draws_from_has_a_canonical_name():
-    assert set(runs.SIMULATOR_NAMES) == set(SWEEP_DATA_SIMULATORS)
-    assert set(runs.SIMULATOR_NAMES.values()) == set(runs.SIMULATORS)
-
-
-def test_the_baseline_quantifier_is_one_the_sweep_runs():
-    assert runs.BASELINE_QUANTIFIER in QUANTIFIERS
+def test_the_arm_with_no_method_simulator_is_not_a_simulator():
+    # It names the absence of a meta-quantifier, so a reader that groups by
+    # method simulator must not draw it as a fourth simulator.
+    assert runs.NO_METHOD_SIMULATOR not in runs.SIMULATORS
+    assert runs.NO_METHOD_SIMULATOR in runs.METHOD_SIMULATORS

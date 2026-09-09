@@ -81,6 +81,12 @@ _Avoid_: wrapper, ensemble
 The quantifier a meta-quantifier wraps and delegates its estimate to.
 _Avoid_: inner quantifier, learner, estimator
 
+**Method**:
+A base quantifier together with the method simulator of the meta-quantifier
+wrapping it, if any. The unit a run is attributed to and a figure draws one
+line for: `DyS` and `QuaDapt-MVN(DyS)` are two methods, not one.
+_Avoid_: variant, approach, algorithm
+
 **Reference score set**:
 The labelled score distribution a quantifier matches a bag against. Either the
 real training scores or a simulated substitute.

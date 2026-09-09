@@ -51,7 +51,7 @@ class QuadaptNew(QuaDapt):
     the simulator interface it draws through is the current one.
     """
 
-    #: Not the ``METHOD_SIMULATORS`` registry in variables.py — this is the set
+    #: Not the ``METHOD_SIMULATORS`` registry in sweep.py — this is the set
     #: this one estimator searches over internally, with no "no simulator" arm.
     CANDIDATE_SIMULATORS = [UniformSimulator(), MVNSimulator(), DirichletSimulator()]
 

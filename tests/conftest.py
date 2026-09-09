@@ -13,12 +13,23 @@ import pandas as pd
 import pytest
 
 import runs
+import sweep
 
 
 @pytest.fixture
 def results_root(tmp_path):
     """A results directory of this test's own, never the project's."""
     return tmp_path / "results"
+
+
+@pytest.fixture
+def smoke_spec():
+    """The smallest sweep that still covers every method, as a value.
+
+    Tests that vary one thing about the sweep say so by replacing one field of
+    this, which is the property the spec exists to have.
+    """
+    return sweep.SMOKE_SWEEP
 
 
 @pytest.fixture

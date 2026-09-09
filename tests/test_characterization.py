@@ -6,10 +6,11 @@ fixture to refresh.
 """
 
 import pandas as pd
+
 import pytest
 
+import sweep
 from tests import characterization
-from variables import QUANTIFIERS
 
 
 @pytest.fixture(scope="module")
@@ -23,13 +24,20 @@ def test_replays_the_committed_runs_exactly(replayed):
     pd.testing.assert_frame_equal(replayed, expected, check_exact=True)
 
 
+def test_every_run_in_the_grid_produced_an_estimate(replayed):
+    # The sweep records a failure as a missing run rather than raising, so a
+    # method that quietly stopped estimating would otherwise reach the
+    # comparison above as a NaN and read as a numeric drift.
+    assert replayed["absolute_error"].notna().all()
+
+
 def test_fixture_covers_every_base_quantifier():
     expected = characterization.load_fixture()
 
-    assert set(expected["Quantifier"]) == set(QUANTIFIERS)
+    assert set(expected["base_quantifier"]) == set(sweep.BASE_QUANTIFIERS)
 
 
 def test_fixture_records_no_meta_quantifier_runs():
-    expected = characterization.load_fixture()
-
-    assert set(expected["Quadapt_Variant"]) == {"None"}
+    # Asserted against the record as written, not against the grid that
+    # replays it: the point is what is frozen in the file.
+    assert set(characterization.read_fixture()["Quadapt_Variant"]) == {"None"}

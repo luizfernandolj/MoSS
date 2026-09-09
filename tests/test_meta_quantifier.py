@@ -27,11 +27,12 @@ lands upstream.
 
 Two limits of that workaround, both consequences of the same gap. It guards
 the library pin rather than the sweep, so a regression introduced in this
-project's own simulators or in METHOD_SIMULATORS would not be caught here — the
-smoke test below is the only thing standing under those. And it draws a larger
-bag than the sweep's TEST_SIZE of 100, deliberately: at 100 the counting
-quantifiers quantise to 0.01, the same order as MIN_SPREAD, and the pass/fail
-margin would rest on that rounding rather than on the property.
+project's own simulators or in the sweep's method-simulator registry would not
+be caught here — the smoke test below is the only thing standing under those.
+And it draws a larger bag than the sweep's own bag size of 100, deliberately:
+at 100 the counting quantifiers quantise to 0.01, the same order as
+MIN_SPREAD, and the pass/fail margin would rest on that rounding rather than on
+the property.
 """
 
 import numpy as np
@@ -39,8 +40,9 @@ import pytest
 
 from mlquantify.meta import QuaDapt
 
-from binary_experiment import run_experiment
-from variables import DATA_SIMULATORS, METHOD_SIMULATORS, QUANTIFIERS
+import runs
+import sweep
+from sweep import DATA_SIMULATORS, run_sweep
 
 #: Controls mlquantify's internal MoSS reference draw, so the only thing
 #: varying between the estimates compared below is the base quantifier.
@@ -51,25 +53,20 @@ SEED = 0
 #: an order of magnitude clear of the smallest of those.
 MIN_SPREAD = 0.01
 
-#: CC ignores the training reference entirely, so it takes no meta-quantifier
-#: path — the sweep short-circuits it, and QuaDapt cannot even call it.
-BASE_QUANTIFIERS = {name: q for name, q in QUANTIFIERS.items() if name != "CC"}
-
-CELL = {
-    "m_train": 0.2,
-    "m_test": 0.5,
-    "alpha": 0.3,
-    "train_simulator": DATA_SIMULATORS["MoSS"],
-    "test_simulator": DATA_SIMULATORS["MoSS"],
-    "train_simulator_name": "MoSS",
-    "test_simulator_name": "MoSS",
+#: CC ignores the reference score set entirely, so it takes no meta-quantifier
+#: path — the sweep records it once as a baseline, and QuaDapt cannot even call
+#: it.
+BASE_QUANTIFIERS = {
+    name: quantifier
+    for name, quantifier in sweep.BASE_QUANTIFIERS.items()
+    if name != runs.BASELINE_QUANTIFIER
 }
 
 
 @pytest.fixture(scope="module")
 def fixed_cell():
     """One cell of simulated scores, large enough not to quantise estimates."""
-    simulate = DATA_SIMULATORS["MoSS"]
+    simulate = DATA_SIMULATORS[runs.UNIFORM]
     rng = np.random.default_rng(20260908)
     train_scores, train_labels = simulate(
         n=2000, alpha=0.5, merging_factor=0.2, random_state=rng
@@ -101,9 +98,14 @@ def test_base_quantifiers_produce_a_material_spread(estimates):
     assert values.max() - values.min() > MIN_SPREAD
 
 
-def test_sweep_completes_for_every_method_and_base_quantifier():
-    runs = run_experiment(**CELL, random_state=0, strict=True)
+def test_the_smoke_sweep_estimates_under_every_method_simulator():
+    # The net under this project's own simulators and registries, which the
+    # test above cannot reach because it drives the library's meta-quantifier
+    # rather than the sweep. A method simulator that stopped working would
+    # reach the results as missing runs, not as an error, so the assertion is
+    # that every estimate is there.
+    produced = run_sweep(sweep.SMOKE_SWEEP)
 
-    assert set(runs["Quantifier"]) == set(QUANTIFIERS)
-    assert set(runs["Quadapt_Variant"]) == set(METHOD_SIMULATORS)
-    assert np.isfinite(runs["MAE"]).all()
+    assert set(produced["method_simulator"]) == set(runs.METHOD_SIMULATORS)
+    assert set(produced["base_quantifier"]) == set(runs.BASE_QUANTIFIERS)
+    assert produced["estimated_prevalence"].notna().all()

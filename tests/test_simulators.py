@@ -22,7 +22,7 @@ from utils.simulators import (
     ScoreSimulator,
     UniformSimulator,
 )
-from variables import DATA_SIMULATORS, METHOD_SIMULATORS
+from sweep import DATA_SIMULATORS, METHOD_SIMULATORS
 
 #: Every implementation. The uniform one is binary by construction, so the
 #: multiclass tests below run on the other two.
