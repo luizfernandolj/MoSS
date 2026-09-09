@@ -36,6 +36,24 @@ stands for, and the call mlquantify's meta-quantifier makes is accepted
 verbatim. These are what a per-simulator signature had no way to state — see
 ADR-0008 for the off-by-one they would have caught.
 
+**Runs module** (`tests/test_runs.py`). The schema of the two tables, that
+they share an estimator block (ADR-0003), that runs survive a Parquet round
+trip without a caller ever naming a file, and that the vocabulary `runs`
+publishes matches the sweep's registries exactly. A run the module refuses to
+save is one a reader would have had to guess about.
+
+**Renderers** (`tests/test_renderers.py`). Every method name the figure export
+filters on exists in the runs it filters. This is the regression for the
+defect the runs module was built to end: the export selected base
+quantifiers named `"X"` and `"MS"` where the sweep records `"TX"` and `"TMS"`,
+so two of the grid's eight methods were never drawn and the figure rendered
+cleanly with six lines.
+
+Both run against a small table built in `tests/conftest.py` from `runs`' own
+vocabulary — never against a full results file, which is what made the old
+readers impossible to test at all. Building it from the vocabulary is the
+point: a rename reaches the fixture too, so a filter left behind fails.
+
 ## Determinism
 
 Tests seed the sweep's own data simulators through `run_experiment`'s

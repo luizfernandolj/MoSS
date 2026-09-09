@@ -47,7 +47,14 @@ now, on all three implementations.
   the classes they used to hold. The result columns they feed —
   `MoSS_Train_Variant`, `MoSS_Test_Variant`, `Quadapt_Variant` — and the
   registry keys that supply their values are frozen by the golden record and by
-  the result files already written, so they keep their old spelling.
+  the result files already written, so they keep their old spelling. **This is
+  now true only of the sweep's own frame.** The runs module (#5) gives stored
+  runs a schema of their own, in the vocabulary of CONTEXT.md, and translates
+  the registry keys into it through `runs.SIMULATOR_NAMES` and
+  `runs.METHOD_SIMULATOR_NAMES`. What stays frozen is the frame
+  `run_experiment` returns and the golden record that replays it; the sweep
+  starts writing through the module, and those columns go, with the sweep seam
+  (#6).
 - The simulators accept and honour a `random_state`, where the old overrides
   accepted one and dropped it. What remains of ADR-0004's gap is entirely
   upstream: mlquantify calls its `MoSS` seam without a seed, so the draws

@@ -15,10 +15,12 @@ rewrites anyway. Its results were void under ADR-0001 regardless.
   four. **Its absence from the rebuilt results is not a finding**, and must not
   be read as one — that is the whole reason this ADR exists rather than a code
   comment alone.
-- `dashboard.py` and `export_grid_matplotlib.py` still carry `"QuadaptNew"`
-  display-label mappings that can no longer fire. They are left alone: both are
-  out of scope for the port and are rewritten behind the results module in the
-  follow-up spec.
+- `dashboard.py` and `export_grid_matplotlib.py` carried `"QuadaptNew"`
+  display-label mappings that could no longer fire. Both were rewritten behind
+  the results module (#5) and the mappings are gone. The figure that used to
+  compare the uniform method simulator against `QuadaptNew` now compares the
+  three method simulators that remain, which is the comparison the study is
+  about; the missing fourth arm is still not a finding.
 - Restoring the simulator means rewriting `best_mixture` against 0.5.1's API,
   which belongs with that rewrite and not with the port.
 - The registry named `QUADAPT_VARIANTS` above is now `METHOD_SIMULATORS`
