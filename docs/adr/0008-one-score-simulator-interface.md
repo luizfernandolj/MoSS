@@ -38,7 +38,10 @@ now, on all three implementations.
 
 - A caller passes a prevalence and nothing else. There is no `n_classes`
   parameter to disagree with it, and a `classes` that disagrees raises rather
-  than being silently ignored as the old overrides ignored it.
+  than being silently ignored as the old overrides ignored it. Binary callers
+  pass the positive class's share as a scalar and let the simulator read it
+  into a vector, rather than writing `[1 - alpha, alpha]` at the call site —
+  that spelling is what the reshaping used to look like.
 - The registries in `variables.py` are `DATA_SIMULATORS` and
   `METHOD_SIMULATORS`, named for the two roles in CONTEXT.md rather than for
   the classes they used to hold. The result columns they feed —
@@ -49,6 +52,12 @@ now, on all three implementations.
   accepted one and dropped it. What remains of ADR-0004's gap is entirely
   upstream: mlquantify calls its `MoSS` seam without a seed, so the draws
   inside a meta-quantifier are still not reproducible.
-- `QuadaptNew` still cannot run, for the reason ADR-0007 gives. It draws
-  through the new interface, but rewriting its `best_mixture` against 0.5.1's
-  API remains its own change.
+- `QuadaptNew` still cannot run, for the reason ADR-0007 gives. Its list of
+  candidate simulators was retargeted at the new classes, because the functions
+  it named no longer exist; nothing else about it changed, and rewriting its
+  `best_mixture` against 0.5.1's API remains its own change. It is therefore
+  the one place a simulator is still chosen by subclass identity rather than by
+  parameter, and it is quarantined.
+- `QuaDaptWithSimulator` forwards `measure`, `merging_factors` and `strategy`
+  to the library rather than restating their defaults, so an upstream change to
+  any of them is not silently overridden here.

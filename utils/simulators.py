@@ -32,7 +32,7 @@ import numpy as np
 EPS = 0.04
 
 
-def as_prevalence(alpha):
+def as_prevalence(requested):
     """Read whatever the caller passed as a prevalence over every class.
 
     A scalar is the positive class's share of a binary problem — that is how
@@ -40,7 +40,8 @@ def as_prevalence(alpha):
     original MoSS paper writes it. A sequence is already the whole vector.
     """
     prevalence = np.asarray(
-        [1.0 - alpha, alpha] if np.ndim(alpha) == 0 else alpha, dtype=float
+        [1.0 - requested, requested] if np.ndim(requested) == 0 else requested,
+        dtype=float,
     )
 
     if prevalence.ndim != 1 or len(prevalence) < 2:
@@ -48,9 +49,13 @@ def as_prevalence(alpha):
             f"prevalence must cover at least two classes, got {prevalence!r}"
         )
     if not np.all(np.isfinite(prevalence)) or np.any(prevalence < 0):
-        raise ValueError(f"prevalence must be finite and non-negative, got {alpha!r}")
+        raise ValueError(
+            f"prevalence must be finite and non-negative, got {requested!r}"
+        )
     if prevalence.sum() <= 0:
-        raise ValueError(f"prevalence must not be empty, got {alpha!r}")
+        raise ValueError(
+            f"prevalence must give some class a share, got {requested!r}"
+        )
 
     return prevalence / prevalence.sum()
 
@@ -216,25 +221,31 @@ class DirichletSimulator(ScoreSimulator):
 
     def _draw(self, counts, merging_factor, classes, rng):
         n_classes = len(counts)
+        # Floored at 0.1 rather than the MVN's 0.0: a Dirichlet concentration
+        # has to stay positive, and the mapping below sends 0 to a vertex the
+        # draw cannot come back from.
         merging_factor = np.clip(merging_factor, 0.1, 1.0)
         centers = np.eye(n_classes)
 
         scores, labels = [], []
         for c in range(n_classes):
             if np.ndim(merging_factor) == 0:
-                m_c = float(merging_factor)
+                overlap = float(merging_factor)
             else:
-                m_c = float(merging_factor[c])
+                overlap = float(merging_factor[c])
 
-            m_c = np.clip(m_c, 0.0, 1.0)
-
-            m_c = 0.5 * m_c + 0.5
-            high_conc = 100**m_c
+            # Half the range, offset: a merging factor of 0 concentrates on the
+            # vertex, 1 spreads across the whole simplex.
+            overlap = 0.5 * overlap + 0.5
+            high_conc = 100**overlap
 
             center = centers[c]
-            mean = center * (1 - m_c)
+            toward_vertex = center * (1 - overlap)
 
-            concentration = (1 - m_c) * (mean * high_conc) + m_c * np.ones(n_classes)
+            concentration = (
+                (1 - overlap) * (toward_vertex * high_conc)
+                + overlap * np.ones(n_classes)
+            )
 
             scores.append(rng.dirichlet(concentration, size=counts[c]))
             labels.append(np.full(counts[c], classes[c]))

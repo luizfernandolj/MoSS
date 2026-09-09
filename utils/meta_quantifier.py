@@ -25,18 +25,13 @@ class QuaDaptWithSimulator(QuaDapt):
     floor.
     """
 
-    def __init__(self,
-                 quantifier,
-                 method_simulator,
-                 measure="topsoe",
-                 merging_factors=np.arange(0.1, 1.0, 0.2),
-                 strategy="ovr"):
-        super().__init__(
-            quantifier=quantifier,
-            measure=measure,
-            merging_factors=merging_factors,
-            strategy=strategy,
-        )
+    #: ``measure``, ``merging_factors`` and ``strategy`` are forwarded rather
+    #: than restated, so that their defaults stay the library's. Restating them
+    #: here would freeze a copy of upstream's choices that no test compares
+    #: against the original — the trap ADR-0007 caught the last time this
+    #: project held a copy of library internals.
+    def __init__(self, quantifier, method_simulator, **quadapt_kwargs):
+        super().__init__(quantifier, **quadapt_kwargs)
         self.method_simulator = method_simulator
 
     def MoSS(self, n, alpha, merging_factor, classes=None, random_state=None):
@@ -56,7 +51,9 @@ class QuadaptNew(QuaDapt):
     the simulator interface it draws through is the current one.
     """
 
-    METHOD_SIMULATORS = [UniformSimulator(), MVNSimulator(), DirichletSimulator()]
+    #: Not the ``METHOD_SIMULATORS`` registry in variables.py — this is the set
+    #: this one estimator searches over internally, with no "no simulator" arm.
+    CANDIDATE_SIMULATORS = [UniformSimulator(), MVNSimulator(), DirichletSimulator()]
 
     def aggregate(self, predictions, train_labels, train_scores):
 
@@ -68,7 +65,7 @@ class QuadaptNew(QuaDapt):
         distances = []
         alphas = []
 
-        for method_simulator in self.METHOD_SIMULATORS:
+        for method_simulator in self.CANDIDATE_SIMULATORS:
             self.MoSS = method_simulator
 
             alpha, distance, _ = self.best_mixture(predictions)

@@ -35,9 +35,12 @@ def run_experiment(m_train,
     if method_simulators is None:
         method_simulators = METHOD_SIMULATORS
 
+    # The prevalence goes in as the positive class's share; the simulator reads
+    # it into a vector itself, so neither the sweep nor anyone else spells out
+    # the negative class.
     train_scores, train_labels = train_simulator(
         n=TRAIN_SIZE,
-        alpha=[0.5, 0.5],
+        alpha=0.5,
         merging_factor=m_train,
         random_state=rng,
     )
@@ -45,7 +48,7 @@ def run_experiment(m_train,
     for i in range(N_REPETITIONS):
         test_scores, test_labels = test_simulator(
             n=TEST_SIZE,
-            alpha=[1 - alpha, alpha],
+            alpha=alpha,
             merging_factor=m_test,
             random_state=rng,
         )

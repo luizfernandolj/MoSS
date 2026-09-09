@@ -72,10 +72,10 @@ def fixed_cell():
     simulate = DATA_SIMULATORS["MoSS"]
     rng = np.random.default_rng(20260908)
     train_scores, train_labels = simulate(
-        n=2000, alpha=[0.5, 0.5], merging_factor=0.2, random_state=rng
+        n=2000, alpha=0.5, merging_factor=0.2, random_state=rng
     )
     test_scores, _ = simulate(
-        n=1000, alpha=[0.7, 0.3], merging_factor=0.5, random_state=rng
+        n=1000, alpha=0.3, merging_factor=0.5, random_state=rng
     )
     return test_scores, train_labels
 
