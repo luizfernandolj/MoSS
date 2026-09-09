@@ -14,6 +14,10 @@ import numpy as np
 # with ``classes`` when it builds the reference score set, so a narrower
 # signature raises TypeError on contact. ``random_state`` is accepted and
 # unused, as upstream documents it — see ADR-0004 for the gap that leaves.
+# ``classes`` is accepted and unused too: these simulators take their class
+# count from ``len(alpha)``, so a ``classes`` disagreeing with it would pass
+# unnoticed rather than raise. The sweep is binary throughout, so the two
+# always agree today; revisit when the multiclass extension lands (#14).
 
 
 class QuadaptMoSS(QuaDapt):

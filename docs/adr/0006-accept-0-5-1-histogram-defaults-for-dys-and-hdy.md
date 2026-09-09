@@ -27,7 +27,7 @@ bin blocks and solves once instead.
 Setting `DyS(bin_strategy="median", laplace_smoothing=True)` and
 `HDy(laplace_smoothing=True)` recovers the old numbers: HDy becomes bit-exact,
 and DyS agrees to within 4.4e-05 — inside the ternary search's own `tol=1e-4`,
-so the residual is where the optimiser stops, not which estimator runs.
+so the residual is where the optimiser stops, not which base quantifier runs.
 
 We nonetheless take 0.5.1's defaults as they ship, and re-capture the fixture
 on 0.5.1. The alternative pins the study to defaults that a future release may
@@ -36,7 +36,7 @@ detail rather than a stated part of either method.
 
 ## Consequences
 
-- DyS and HDy mean different estimators before and after this change. Results
+- DyS and HDy mean different base quantifiers before and after this change. Results
   from the two eras are not comparable for those two methods. Everything from
   the 0.2.0 era is void under ADR-0001 anyway, so nothing further is lost.
 - The characterization fixture is no longer evidence about the upgrade. It is a
@@ -47,3 +47,10 @@ detail rather than a stated part of either method.
   estimates "are aggregated by their median" while the default does not do
   that. This is an upstream bug, not a decision this project makes. If it is
   fixed upstream, DyS moves again and this ADR should be revisited.
+- That bug is reported to `coenlab/mlquantify` rather than worked around here.
+  Confirmed on one fixed binary cell: `DyS()` gives 0.341137 and
+  `DyS(bin_strategy="median")` gives 0.339596, so the default demonstrably
+  skips the median the docstring promises. Whichever way upstream resolves it —
+  moving the default to match the docs, or the docs to match the default — this
+  project repins and re-captures the fixture. The report body is drafted at
+  `.scratch/upstream-dys-issue.md`.

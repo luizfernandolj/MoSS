@@ -27,7 +27,7 @@ Two limits of that workaround, both consequences of the same gap. It guards
 the library pin rather than the sweep, so a regression introduced in this
 project's own overrides or in QUADAPT_VARIANTS would not be caught here — the
 smoke test below is the only thing standing under those. And it draws a larger
-test set than the sweep's TEST_SIZE of 100, deliberately: at 100 the counting
+bag than the sweep's TEST_SIZE of 100, deliberately: at 100 the counting
 quantifiers quantise to 0.01, the same order as MIN_SPREAD, and the pass/fail
 margin would rest on that rounding rather than on the property.
 """
@@ -89,7 +89,7 @@ def estimates(fixed_cell):
 
 
 def test_base_quantifiers_are_not_all_collapsed_to_one_estimate(estimates):
-    # The exact signature of the defect: ten wrappers, one number.
+    # The exact signature of the defect: ten meta-quantifiers, one number.
     assert len(set(estimates.values())) > 1
 
 
