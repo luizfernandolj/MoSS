@@ -330,9 +330,7 @@ def seed_for(spec, cell, repetition, draw):
 # --- Running a cell --------------------------------------------------------
 
 
-def estimator_for(
-    spec, base_quantifier, method_simulator, reference, candidate_seed=None
-):
+def estimator_for(spec, base_quantifier, method_simulator, reference, candidate_seed):
     """The estimator for one (base quantifier, method simulator) pair.
 
     ``None`` means the pair names no method. The baseline quantifier reads no
@@ -344,6 +342,12 @@ def estimator_for(
     sets from — :func:`seed_for` with :data:`CANDIDATE_DRAW`, which the caller
     has already derived because it belongs to the repetition rather than to
     this pair. The other two adapters draw nothing and ignore it.
+
+    Required, with no default, for the reason :class:`MetaEstimator` gives for
+    its own seed: a caller who leaves it out gets a meta-quantifier drawing
+    from OS entropy, which is the failure this whole change is about, and it
+    would go unremarked. ``None`` is still accepted — it is how a spec that
+    carries no seed reaches here — but it has to be passed.
     """
     quantifier = spec.base_quantifiers[base_quantifier]
 
