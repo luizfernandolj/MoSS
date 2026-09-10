@@ -30,11 +30,47 @@ class QuaDaptWithSimulator(QuaDapt):
     #: here would freeze a copy of upstream's choices that no test compares
     #: against the original — the trap ADR-0007 caught the last time this
     #: project held a copy of library internals.
-    def __init__(self, quantifier, method_simulator, **quadapt_kwargs):
+    def __init__(
+        self, quantifier, method_simulator, random_state=None, **quadapt_kwargs
+    ):
         super().__init__(quantifier, **quadapt_kwargs)
         self.method_simulator = method_simulator
+        self.random_state = random_state
+        self._candidate_draws = np.random.default_rng(random_state)
+
+    def aggregate(self, *args, **kwargs):
+        """One estimate, one stream.
+
+        The library calls :meth:`MoSS` several times per estimate — once per
+        candidate merging factor, then once more at the one it picked — so the
+        draws have to differ from one another while the estimate as a whole
+        repeats. Restarting the stream here is what makes the second of those
+        true: an estimate is reproducible from the estimator that made it,
+        however many estimates that estimator has already made.
+
+        Forwarded blind rather than by name, for the reason the class comment
+        gives: restating upstream's signature here would freeze a copy of it
+        that no test compares against the original.
+        """
+        self._candidate_draws = np.random.default_rng(self.random_state)
+        return super().aggregate(*args, **kwargs)
 
     def MoSS(self, n, alpha, merging_factor, classes=None, random_state=None):
+        """Draw one candidate score set, seeded whether or not the caller says.
+
+        mlquantify calls this seam with no ``random_state`` at all — its own
+        ``MoSS`` accepts one and documents it as unused (ADR-0004) — so a
+        simulator honouring only what it was passed would draw from OS entropy
+        on every candidate, which is the nondeterminism that hid ADR-0001's
+        defect. Falling back to this estimator's own stream closes that without
+        waiting on the library: the seam is ours to override, and overriding it
+        is already why this class exists.
+
+        A ``random_state`` that *is* passed still wins, so the day upstream
+        threads one through, it is the caller's seed that governs.
+        """
+        if random_state is None:
+            random_state = self._candidate_draws
         return self.method_simulator(n, alpha, merging_factor, classes, random_state)
 
 

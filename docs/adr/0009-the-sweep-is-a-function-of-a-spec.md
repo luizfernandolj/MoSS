@@ -125,3 +125,9 @@ version of the same defect. `SweepSpec` rejects that spec.
   #8, and deliberately not fixed here, so that the golden record replays
   bit-identical through the new seam and the port is the only thing being
   judged.
+
+**Amended by ADR-0011**, which fixes that seeding and, as predicted here, could
+not do it and keep the record replaying bit-identical. Both consequences above
+that turn on the record are superseded: it has been re-captured, in today's
+schema rather than translated forward, and compares on both prevalences rather
+than on absolute error.
