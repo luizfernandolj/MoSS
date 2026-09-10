@@ -14,6 +14,8 @@ built from, so a caller can hand-pick cells. The characterization grid does:
 it runs matched simulator pairs only, which no cross-product describes.
 """
 
+import dataclasses
+import hashlib
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -105,14 +107,22 @@ class MetaEstimator(Estimator):
     but reads only its labels: the candidates are simulated, so the real
     reference scores are the one thing this method deliberately does not see.
     That substitution is the study's question (CONTEXT.md).
+
+    The seed has no default, unlike everywhere else in this project that takes
+    one. This is the draw ADR-0004 was written about — an unseeded one here is
+    what let ADR-0001's defect pass for noise — so leaving it out has to be a
+    thing someone wrote down, not a thing they forgot.
     """
 
     quantifier: type
     method_simulator: ScoreSimulator
     reference: ReferenceScoreSet
+    random_state: Optional[int]
 
     def estimate(self, bag_scores):
-        meta = QuaDaptWithSimulator(self.quantifier(), self.method_simulator)
+        meta = QuaDaptWithSimulator(
+            self.quantifier(), self.method_simulator, self.random_state
+        )
         return _positive_share(meta.aggregate(bag_scores, self.reference.labels))
 
 
@@ -130,9 +140,12 @@ class CandidateEstimator(Estimator):
     quantifier: type
     method_simulators: Tuple[ScoreSimulator, ...]
     reference: ReferenceScoreSet
+    random_state: Optional[int]
 
     def estimate(self, bag_scores):
-        meta = QuaDaptOverCandidates(self.quantifier(), self.method_simulators)
+        meta = QuaDaptOverCandidates(
+            self.quantifier(), self.method_simulators, self.random_state
+        )
         return _positive_share(
             meta.aggregate(bag_scores, self.reference.scores, self.reference.labels)
         )
@@ -251,10 +264,14 @@ class SweepSpec:
     #: experiment, which is the property this type exists to have.
     reference_prevalence: float = 0.5
 
-    #: Seeds each cell's own data simulators. ``None`` draws from OS entropy.
-    #: Every cell is seeded from this one value, so two cells sharing a
-    #: simulator draw identical scores — deterministic seeding across the grid
-    #: is #8, and is not this seam's job.
+    #: The root every draw in the sweep is seeded from, cell by cell and
+    #: repetition by repetition (:func:`seed_for`) — the experiment's own
+    #: simulators and the method simulators inside its meta-quantifiers alike.
+    #: Two runs of a spec that carries one produce identical runs.
+    #:
+    #: ``None`` draws from OS entropy instead, which makes a sweep
+    #: irreproducible: it is what a caller asks for deliberately, not a
+    #: default anything published should keep.
     seed: Optional[int] = None
 
     def __post_init__(self):
@@ -293,16 +310,76 @@ class SweepSpec:
             )
 
 
+# --- Seeding ---------------------------------------------------------------
+
+#: The three draws a cell makes, named apart so that no two of them can derive
+#: the same seed. The reference set is drawn once for the whole cell; the bag
+#: and the meta-quantifier's candidate score sets are drawn once per repetition.
+REFERENCE_DRAW = "reference"
+BAG_DRAW = "bag"
+CANDIDATE_DRAW = "candidates"
+
+#: The repetition a cell-wide draw is attributed to. Repetitions are numbered
+#: from one, so nothing else can claim it.
+BEFORE_ANY_REPETITION = 0
+
+
+def seed_for(spec, cell, repetition, draw):
+    """The seed for one draw: which cell, which repetition, which of the three.
+
+    Two runs of the same spec derive the same seeds, and two draws that should
+    differ derive different ones. The spec used to hand its one ``seed`` to
+    every cell, so the grid drew the same reference score set in every cell
+    that shared a simulator and a merging factor — 22,743 cells resampling far
+    fewer distinct draws, and a sweep whose spread understated the sampling
+    variation it was measuring.
+
+    ``None`` in, ``None`` out. A spec with no seed draws from OS entropy, and
+    deriving a seed from ``None`` would take that option away.
+
+    Hashed rather than composed by arithmetic because a cell is strings and
+    floats, and with blake2b rather than ``hash`` because Python salts string
+    hashing per process. Cells cross into loky workers on the published path,
+    where a salted hash would seed each worker differently and lose the one
+    property this function exists to have.
+
+    Deliberately *not* a function of the base quantifier. Every base quantifier
+    in a cell sees the same bag and the same simulated candidates, so the only
+    thing varying between their estimates is the quantifier itself — which is
+    what makes identical estimates across base quantifiers readable as the
+    wiring alarm ADR-0004 asks for rather than as a coincidence of the draw.
+    """
+    if spec.seed is None:
+        return None
+
+    key = (spec.seed, dataclasses.astuple(cell), repetition, draw)
+    return int.from_bytes(
+        hashlib.blake2b(repr(key).encode(), digest_size=8).digest(), "big"
+    )
+
+
 # --- Running a cell --------------------------------------------------------
 
 
-def estimator_for(spec, base_quantifier, method_simulator, reference):
+def estimator_for(spec, base_quantifier, method_simulator, reference, candidate_seed):
     """The estimator for one (base quantifier, method simulator) pair.
 
     ``None`` means the pair names no method. The baseline quantifier reads no
     reference score set, so it has no meta-quantifier arm: pairing it with a
     method simulator would file the same number again under a simulator that
     took no part in producing it.
+
+    ``candidate_seed`` is the one both meta-quantifier arms draw their
+    candidate score sets from — :func:`seed_for` with :data:`CANDIDATE_DRAW`,
+    which the caller has already derived because it belongs to the repetition
+    rather than to this pair. The other two adapters draw nothing and ignore
+    it.
+
+    Required, with no default, for the reason :class:`MetaEstimator` gives for
+    its own seed: a caller who leaves it out gets a meta-quantifier drawing
+    from OS entropy, which is the failure this whole change is about, and it
+    would go unremarked. ``None`` is still accepted — it is how a spec that
+    carries no seed reaches here — but it has to be passed.
     """
     quantifier = spec.base_quantifiers[base_quantifier]
 
@@ -316,11 +393,14 @@ def estimator_for(spec, base_quantifier, method_simulator, reference):
 
     if method_simulator == runs.ALL_SIMULATORS:
         return CandidateEstimator(
-            quantifier, spec.method_simulators[method_simulator], reference
+            quantifier,
+            spec.method_simulators[method_simulator],
+            reference,
+            candidate_seed,
         )
 
     return MetaEstimator(
-        quantifier, spec.method_simulators[method_simulator], reference
+        quantifier, spec.method_simulators[method_simulator], reference, candidate_seed
     )
 
 
@@ -331,9 +411,14 @@ def run_cell(cell, spec):
     of the experiment is which method reads it best, so drawing a fresh one per
     method would vary the wrong thing. Then one bag per repetition, and one run
     per method on each.
+
+    Each of those draws is seeded from where it happens rather than from one
+    generator threaded through the cell (:func:`seed_for`). A single stream
+    made every draw depend on every draw before it: the bags moved when the
+    reference score set changed size, and a cell's numbers depended on how many
+    repetitions had already run.
     """
-    rng = np.random.default_rng(spec.seed)
-    reference = _draw_reference(cell, spec, rng)
+    reference = _draw_reference(cell, spec)
 
     rows = []
     for repetition in range(1, spec.repetitions + 1):
@@ -341,14 +426,15 @@ def run_cell(cell, spec):
             n=spec.bag_size,
             alpha=cell.target_prevalence,
             merging_factor=cell.bag_merging_factor,
-            random_state=rng,
+            random_state=seed_for(spec, cell, repetition, BAG_DRAW),
         )
         true_prevalence = _observed_prevalence(bag_labels)
+        candidate_seed = seed_for(spec, cell, repetition, CANDIDATE_DRAW)
 
         for method_simulator in spec.method_simulators:
             for base_quantifier in spec.base_quantifiers:
                 estimator = estimator_for(
-                    spec, base_quantifier, method_simulator, reference
+                    spec, base_quantifier, method_simulator, reference, candidate_seed
                 )
                 if estimator is None:
                     continue
@@ -449,13 +535,17 @@ def _warn_about_missing_runs(produced):
         )
 
 
-def _draw_reference(cell, spec, rng):
-    """The reference score set every method in this cell is given."""
+def _draw_reference(cell, spec):
+    """The reference score set every method in this cell is given.
+
+    Drawn once for the whole cell, so it is seeded from the cell and not from
+    any repetition in it (:data:`BEFORE_ANY_REPETITION`).
+    """
     scores, labels = spec.data_simulators[cell.reference_simulator](
         n=spec.reference_size,
         alpha=spec.reference_prevalence,
         merging_factor=cell.reference_merging_factor,
-        random_state=rng,
+        random_state=seed_for(spec, cell, BEFORE_ANY_REPETITION, REFERENCE_DRAW),
     )
     return ReferenceScoreSet(scores, labels)
 
@@ -523,6 +613,11 @@ SYNTHETIC_SWEEP = SweepSpec(
     reference_size=2000,
     bag_size=100,
     repetitions=3,
+    #: The published sweep is seeded, so that the runs behind a figure can be
+    #: reproduced from the spec that made them rather than only from the file
+    #: they were written to. Any value would do; this one is the date the
+    #: seeding landed.
+    seed=20260910,
 )
 
 #: The same sweep, small enough to run in seconds. Every method and every base

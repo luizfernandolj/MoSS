@@ -5,9 +5,9 @@
 ```
 
 That is the whole suite. It runs in about thirty-five seconds and needs no data
-beyond what is committed. Half of that is the smoke sweep, which several tests
-run and which doubled in cost when the arm that searches every candidate
-rejoined it (ADR-0010).
+beyond what is committed. Most of that is the smoke sweep, which several tests
+run: it doubled in cost when the arm that searches every candidate rejoined it
+(ADR-0010), and the determinism tests below run it twice more on purpose.
 
 ## What is in it
 
@@ -19,27 +19,36 @@ upgrade, and that change is the defect ADR-0001 records being fixed.
 The fixture was first captured on 0.2.0 to prove the upgrade left plain runs
 untouched. It did not — DyS and HDy changed, for the reasons ADR-0006 records —
 so it was re-captured on 0.5.1 and now guards the pinned library against future
-drift instead.
+drift instead. It was re-captured once more when the seeding changed under it
+(ADR-0011), which is also when it stopped being translated forward from the
+pre-ADR-0009 schema: it is now in today's, and compares on both prevalences
+rather than on absolute error alone.
 
-It is still in the schema the sweep returned when it was captured, and it stays
-that way. `tests/characterization.py` translates it forward and compares on
-absolute error, the one quantity both schemas express (ADR-0009). There is no
-regeneration command, on purpose: if a characterization test fails, a run that
-should have been untouched changed, and re-capturing is a decision to argue for
-in an ADR rather than a command to reach for.
+There is no regeneration command, on purpose: if a characterization test fails,
+a run that should have been untouched changed, and re-capturing is a decision
+to argue for in an ADR rather than a command to reach for. Both re-captures
+went that way, and the second one carried a measurement — across four base
+seeds the old and new seeding overlap for all eleven quantifiers, pooled means
+0.0999 and 0.1001.
 
 **Sweep** (`tests/test_sweep.py`). That the grid is a parameter and not a
 module global; that the spec's vocabulary is the one `runs` stores, so a sweep
 cannot spend hours producing runs no reader can name; the calling convention
-each of the four estimator adapters follows; and the regression for ADR-0001's
-second defect — a failing estimator records a missing run rather than the
-*previous* method's number. Verified by reintroducing the defect: three tests
-fail.
+each of the four estimator adapters follows; where a seed comes from and what
+it guarantees (see Determinism below); and the regression for ADR-0001's second
+defect — a failing estimator records a missing run rather than the *previous*
+method's number. Verified by reintroducing the defect: three tests fail.
 
-**Meta-quantifier** (`tests/test_meta_quantifier.py`). A regression test that
-different base quantifiers under one meta-quantifier produce different
-estimates — the property whose absence went unnoticed across 3.75M runs — and a
-smoke test that `sweep.SMOKE_SWEEP`, which covers every method and base
+**Meta-quantifier** (`tests/test_meta_quantifier.py`). That different base
+quantifiers under one meta-quantifier produce different estimates — the
+property whose absence went unnoticed across 3.75M runs — asserted twice, at
+two seams that guard different things. At the sweep seam, on this project's own
+simulators and registries. At the library seam, driving mlquantify's `QuaDapt`
+directly, which is what keeps the pinned version honest: held fixed, 0.2.0
+returns one identical estimate for all ten base quantifiers and 0.5.1 returns a
+spread.
+
+Plus a smoke test that `sweep.SMOKE_SWEEP`, which covers every method and base
 quantifier, produces an estimate for all of them. Note what that smoke test has
 to assert: a broken method simulator now reaches the results as missing runs
 rather than as an exception, so "completes without raising" would no longer
@@ -90,19 +99,25 @@ point: a rename reaches the fixture too, so a filter left behind fails.
 
 ## Determinism
 
-Tests seed the sweep's own data simulators through the spec's `seed`.
+A spec that carries a `seed` produces identical runs every time, and that is
+asserted rather than assumed: `test_running_the_same_spec_twice_produces_
+identical_runs` compares two whole sweeps, meta-quantifier arms included. Every
+draw is seeded from the cell and the repetition it belongs to (ADR-0011), so
+two further properties hold and are tested — the bags do not move when the
+reference score set changes size, and `n_jobs` does not change the runs.
 
-The simulators *inside* a meta-quantifier are a different matter. They now
-accept a `random_state` and honour it, and the meta-quantifier forwards
-whatever it is given — but mlquantify never gives it one, calling its `MoSS`
-seam with no seed at all (ADR-0004). So the draws are still unseeded, and that
-is not merely inconvenient: unseeded draws make estimates differ between base
-quantifiers even when the meta-quantifier ignores them, so the defect and the
-fix produce indistinguishable spreads at the sweep seam. The regression test
-therefore drives mlquantify's own `QuaDapt` — whose `MoSS` still draws from the
-legacy global `np.random`, and so can be pinned with `np.random.seed` — rather
-than the sweep. Held fixed that way, 0.2.0 returns one identical estimate for
-all ten base quantifiers and 0.5.1 returns a spread.
+The seed is deliberately not a function of the base quantifier, which is what
+lets the collapse regression stand at the sweep seam: ten quantifiers on one
+bag with one set of candidates, so the 0.2.0 defect would show as one number
+repeated ten times. Verified by imitating the defect — the spread goes from
+0.27 to exactly 0.0.
 
-What is left of ADR-0004's gap is entirely upstream. Move that test onto the
-sweep seam once the library passes the seed through.
+What is left is the library's own `QuaDapt`, whose `MoSS` accepts a
+`random_state`, documents it as unused, and draws from the legacy global
+`np.random` ([coenlab/mlquantify#5][upstream]). That is reachable only by code
+which does *not* replace the `MoSS` seam — in this project, exactly one test:
+the library-seam half of `tests/test_meta_quantifier.py`, pinned with
+`np.random.seed` because that is the only lever the library offers. It can drop
+the pin when [#5][upstream] lands.
+
+[upstream]: https://github.com/coenlab/mlquantify/issues/5

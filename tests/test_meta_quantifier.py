@@ -6,33 +6,42 @@ every base quantifier computed the same thing. Under 0.5.1 the mixture search
 selects only a merging factor and the base quantifier produces the estimate
 from a reference simulated at that factor.
 
-Why this test does not go through the sweep entry point
--------------------------------------------------------
-It cannot, yet. The sweep's meta-quantifier arms use this project's own
-simulators, which honour a ``random_state`` — but mlquantify calls its ``MoSS``
-seam without one, so the draws are unseeded all the same (ADR-0004). Those
-unseeded draws make estimates differ between
-base quantifiers *even under the defect* — measured on a fixed cell, the
-per-run spread across base quantifiers is indistinguishable between 0.2.0 and
-0.5.1 (medians 0.258 and 0.264). Any assertion at the sweep seam therefore
-passes on both versions and guards nothing.
+The property is asserted twice, at two seams, because the two guard different
+things.
 
-Held fixed, the two versions separate completely: 0.2.0 returns one identical
-estimate for all ten base quantifiers, 0.5.1 returns a spread of estimates.
-mlquantify's own ``QuaDapt.MoSS`` draws from the legacy global ``np.random``,
-so seeding it is possible here even though reaching the project's simulators
-through the library's call is not. That is why this test wraps the library's
-meta-quantifier directly. Move it onto the sweep seam once ADR-0004's seeding
-lands upstream.
+At the sweep seam
+-----------------
+``test_base_quantifiers_in_a_cell_do_not_collapse_to_one_estimate`` is the
+assertion this project actually cares about: this project's simulators, this
+project's registries, one bag, one method simulator, ten base quantifiers.
 
-Two limits of that workaround, both consequences of the same gap. It guards
-the library pin rather than the sweep, so a regression introduced in this
-project's own simulators or in the sweep's method-simulator registry would not
-be caught here — the smoke test below is the only thing standing under those.
-And it draws a larger bag than the sweep's own bag size of 100, deliberately:
-at 100 the counting quantifiers quantise to 0.01, the same order as
-MIN_SPREAD, and the pass/fail margin would rest on that rounding rather than on
-the property.
+It could not be written until the candidate draws were seeded (ADR-0011). While
+they came from OS entropy, every base quantifier in a cell drew its own
+candidates, so estimates differed *even under the defect* — measured on a fixed
+cell, the per-run spread was indistinguishable between 0.2.0 and 0.5.1 (medians
+0.258 and 0.264), and any assertion here passed on both versions and guarded
+nothing. Now that the seed is derived from the cell and the repetition and
+*not* from the base quantifier, the ten estimates come from identical inputs:
+under the defect they would be one number repeated ten times, and they are ten
+numbers spanning about 0.27.
+
+That is ADR-0004's second consequence made into a test rather than a
+convention — identical output across base quantifiers is an alarm about wiring,
+not a coincidence.
+
+At the library seam
+-------------------
+``test_base_quantifiers_produce_a_material_spread`` keeps the library pin
+honest, which the sweep-seam test cannot: it drives mlquantify's own
+``QuaDapt``, whose ``MoSS`` still draws from the legacy global ``np.random``
+(ADR-0004) and so is pinned with ``np.random.seed``. Held fixed that way, the
+two versions separate completely — 0.2.0 returns one identical estimate for all
+ten base quantifiers, 0.5.1 returns a spread.
+
+It draws a larger bag than the sweep's own bag size of 100, deliberately: at
+100 the counting quantifiers quantise to 0.01, the same order as MIN_SPREAD,
+and the pass/fail margin would rest on that rounding rather than on the
+property.
 """
 
 import numpy as np
@@ -98,14 +107,30 @@ def test_base_quantifiers_produce_a_material_spread(estimates):
     assert values.max() - values.min() > MIN_SPREAD
 
 
-def test_the_smoke_sweep_estimates_under_every_method_simulator():
-    # The net under this project's own simulators and registries, which the
-    # test above cannot reach because it drives the library's meta-quantifier
-    # rather than the sweep. A method simulator that stopped working would
-    # reach the results as missing runs, not as an error, so the assertion is
-    # that every estimate is there.
-    produced = run_sweep(sweep.SMOKE_SWEEP)
+@pytest.fixture(scope="module")
+def smoke_runs():
+    """The smoke sweep's runs: every method simulator, every base quantifier."""
+    return run_sweep(sweep.SMOKE_SWEEP)
 
-    assert set(produced["method_simulator"]) == set(runs.METHOD_SIMULATORS)
-    assert set(produced["base_quantifier"]) == set(runs.BASE_QUANTIFIERS)
-    assert produced["estimated_prevalence"].notna().all()
+
+def test_the_smoke_sweep_estimates_under_every_method_simulator(smoke_runs):
+    # The net under this project's own simulators and registries, which the
+    # library-seam test above cannot reach because it drives mlquantify's
+    # meta-quantifier rather than the sweep. A method simulator that stopped
+    # working would reach the results as missing runs, not as an error, so the
+    # assertion is that every estimate is there.
+    assert set(smoke_runs["method_simulator"]) == set(runs.METHOD_SIMULATORS)
+    assert set(smoke_runs["base_quantifier"]) == set(runs.BASE_QUANTIFIERS)
+    assert smoke_runs["estimated_prevalence"].notna().all()
+
+
+def test_base_quantifiers_in_a_cell_do_not_collapse_to_one_estimate(smoke_runs):
+    # The defect, stated where this project would suffer it. Grouped by method
+    # simulator and repetition, the rows differ in nothing but the base
+    # quantifier: same bag, same candidate score sets, because the seed is
+    # derived from the cell and the repetition and not from the quantifier
+    # (ADR-0011). Under 0.2.0 each group would hold one number repeated.
+    meta = smoke_runs[smoke_runs["method_simulator"] != runs.NO_METHOD_SIMULATOR]
+    spread = meta.groupby(["method_simulator", "repetition"])["estimated_prevalence"]
+
+    assert (spread.max() - spread.min() > MIN_SPREAD).all()

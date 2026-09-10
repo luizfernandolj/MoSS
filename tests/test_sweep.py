@@ -29,7 +29,7 @@ from sweep import (
     run_sweep,
 )
 from tests.score_sets import UNMATCHABLE, FixedSimulator, scored
-from utils.simulators import UniformSimulator
+from utils.simulators import MVNSimulator, UniformSimulator
 
 
 # ---------------------------------------------------------------------------
@@ -142,22 +142,10 @@ def reference():
     return ReferenceScoreSet(scores, labels)
 
 
-class SeededSimulator(UniformSimulator):
-    """A method simulator that draws the same scores every time.
-
-    mlquantify calls its ``MoSS`` seam without a seed (ADR-0004), so a real
-    method simulator draws differently on every call and nothing about a
-    meta-quantifier's estimate can be compared to anything. Fixing the seed
-    here is what makes the calling convention observable.
-    """
-
-    def __init__(self, seed):
-        self.seed = seed
-
-    def __call__(self, n, alpha, merging_factor, classes=None, random_state=None):
-        return super().__call__(
-            n, alpha, merging_factor, classes, np.random.default_rng(self.seed)
-        )
+#: Any fixed seed. mlquantify calls its ``MoSS`` seam without one (ADR-0004),
+#: so a meta-quantifier's estimate could not be compared to anything until the
+#: estimator carried its own — which is what these tests now hand it.
+METHOD_SEED = 20260909
 
 
 def contradicted(reference):
@@ -194,18 +182,39 @@ def test_a_meta_estimator_reads_the_reference_labels_but_not_its_scores(bag, ref
     # A meta-quantifier does not match against the real reference score set at
     # all: it simulates candidates and picks one. The reference is there only
     # to say which classes exist, so contradicting its scores changes nothing.
-    simulator = SeededSimulator(seed=20260909)
+    simulator = UniformSimulator()
 
-    assert MetaEstimator(DyS, simulator, reference).estimate(bag) == MetaEstimator(
-        DyS, simulator, contradicted(reference)
+    assert MetaEstimator(
+        DyS, simulator, reference, METHOD_SEED
+    ).estimate(bag) == MetaEstimator(
+        DyS, simulator, contradicted(reference), METHOD_SEED
     ).estimate(bag)
 
 
 def test_a_meta_estimator_draws_with_the_method_simulator_it_was_given(bag, reference):
     # The method simulator is a property of the estimator (CONTEXT.md), so two
-    # estimators differing only in it are two different methods.
-    one = MetaEstimator(DyS, SeededSimulator(seed=1), reference).estimate(bag)
-    another = MetaEstimator(DyS, SeededSimulator(seed=2), reference).estimate(bag)
+    # estimators differing only in it are two different methods. Held on one
+    # seed, so that what differs between the two estimates is the simulator
+    # rather than the draw.
+    one = MetaEstimator(DyS, UniformSimulator(), reference, METHOD_SEED).estimate(bag)
+    another = MetaEstimator(DyS, MVNSimulator(), reference, METHOD_SEED).estimate(bag)
+
+    assert one != another
+
+
+def test_a_seeded_meta_estimator_makes_the_same_estimate_twice(bag, reference):
+    # The draw the library never seeds. Two estimators alike in everything,
+    # including their seed, are the same method on the same bag, so a
+    # difference between them could only come from the candidate score sets
+    # they drew — which is the nondeterminism ADR-0004 exists to remove.
+    estimator = MetaEstimator(DyS, UniformSimulator(), reference, METHOD_SEED)
+
+    assert estimator.estimate(bag) == estimator.estimate(bag)
+
+
+def test_two_meta_estimators_on_different_seeds_draw_different_candidates(bag, reference):
+    one = MetaEstimator(DyS, UniformSimulator(), reference, 1).estimate(bag)
+    another = MetaEstimator(DyS, UniformSimulator(), reference, 2).estimate(bag)
 
     assert one != another
 
@@ -219,9 +228,49 @@ def test_a_candidate_estimator_reads_the_real_reference_scores(bag, reference):
     # they did not produce it.
     simulators = (FixedSimulator(**UNMATCHABLE),)
 
-    assert CandidateEstimator(DyS, simulators, reference).estimate(
+    assert CandidateEstimator(DyS, simulators, reference, METHOD_SEED).estimate(
         bag
-    ) != CandidateEstimator(DyS, simulators, contradicted(reference)).estimate(bag)
+    ) != CandidateEstimator(
+        DyS, simulators, contradicted(reference), METHOD_SEED
+    ).estimate(bag)
+
+
+@pytest.fixture
+def rejected_reference():
+    """A reference score set the candidate search has to reject.
+
+    Both classes at one score, so every mixture of it is the same distribution
+    and it matches no bag better than any other (``score_sets.scored``). The
+    winning candidate is therefore always a simulated one, which is what makes
+    the two tests below about the draw rather than about the real scores.
+    """
+    scores, labels = scored(400, 0.5, **UNMATCHABLE)
+    return ReferenceScoreSet(scores, labels)
+
+
+def test_a_seeded_candidate_estimator_makes_the_same_estimate_twice(
+    bag, rejected_reference
+):
+    # The same requirement as the arm above, over more draws: this one
+    # simulates a candidate per simulator per merging factor rather than one
+    # simulator's grid (ADR-0010), and repeating the estimate has to repeat all
+    # of them.
+    estimator = CandidateEstimator(
+        DyS, (UniformSimulator(),), rejected_reference, METHOD_SEED
+    )
+
+    assert estimator.estimate(bag) == estimator.estimate(bag)
+
+
+def test_two_candidate_estimators_on_different_seeds_draw_different_candidates(
+    bag, rejected_reference
+):
+    # What keeps the test above from passing by construction: the estimate
+    # moves with the seed, so the candidates it is drawn from are reaching it.
+    one = CandidateEstimator(DyS, (UniformSimulator(),), rejected_reference, 1)
+    another = CandidateEstimator(DyS, (UniformSimulator(),), rejected_reference, 2)
+
+    assert one.estimate(bag) != another.estimate(bag)
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +335,123 @@ def test_each_repetition_draws_a_bag_of_its_own(smoke_spec):
 
     assert set(produced["repetition"]) == {1, 2}
     assert produced.groupby(["base_quantifier", "method_simulator"]).size().eq(2).all()
+
+
+# ---------------------------------------------------------------------------
+# Where a seed comes from
+# ---------------------------------------------------------------------------
+#
+# A spec used to carry one seed and hand it to every cell, so two cells that
+# shared a simulator and a merging factor drew the same scores — the whole grid
+# resampling one draw rather than sampling the space it was built to cover.
+
+
+def cells_differing_in(**field):
+    """Two cells alike but for one field, as :func:`seed_for` sees them."""
+    base = grid((runs.UNIFORM,), (0.5,), (0.4,))[0]
+    return base, dataclasses.replace(base, **field)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        {"reference_simulator": runs.MVN},
+        {"reference_merging_factor": 0.8},
+        {"bag_simulator": runs.MVN},
+        {"bag_merging_factor": 0.8},
+        {"target_prevalence": 0.6},
+    ],
+)
+def test_two_cells_alike_but_for_one_field_derive_different_seeds(smoke_spec, field):
+    one, another = cells_differing_in(**field)
+
+    assert sweep.seed_for(smoke_spec, one, 1, sweep.BAG_DRAW) != sweep.seed_for(
+        smoke_spec, another, 1, sweep.BAG_DRAW
+    )
+
+
+def test_the_same_cell_derives_the_same_seed_every_time(smoke_spec):
+    cell = smoke_spec.cells[0]
+
+    assert sweep.seed_for(smoke_spec, cell, 1, sweep.BAG_DRAW) == sweep.seed_for(
+        smoke_spec, cell, 1, sweep.BAG_DRAW
+    )
+
+
+def test_each_repetition_and_each_draw_of_a_cell_gets_a_seed_of_its_own(smoke_spec):
+    cell = smoke_spec.cells[0]
+
+    derived = {
+        sweep.seed_for(smoke_spec, cell, repetition, draw)
+        for repetition in (1, 2, 3)
+        for draw in (sweep.REFERENCE_DRAW, sweep.BAG_DRAW, sweep.CANDIDATE_DRAW)
+    }
+
+    assert len(derived) == 9
+
+
+def test_two_specs_on_different_seeds_derive_different_seeds(smoke_spec):
+    other = dataclasses.replace(smoke_spec, seed=smoke_spec.seed + 1)
+
+    assert sweep.seed_for(smoke_spec, smoke_spec.cells[0], 1, sweep.BAG_DRAW) != (
+        sweep.seed_for(other, other.cells[0], 1, sweep.BAG_DRAW)
+    )
+
+
+def test_a_spec_with_no_seed_derives_none(smoke_spec):
+    # Not a seed of its own: ``None`` is how a caller asks for OS entropy, and
+    # deriving something from it would take that option away.
+    unseeded = dataclasses.replace(smoke_spec, seed=None)
+
+    assert sweep.seed_for(unseeded, unseeded.cells[0], 1, sweep.BAG_DRAW) is None
+
+
+# ---------------------------------------------------------------------------
+# The same spec twice
+# ---------------------------------------------------------------------------
+
+
+def test_running_the_same_spec_twice_produces_identical_runs(smoke_spec):
+    # Every arm of the smoke spec, including the meta-quantifier's, whose
+    # candidate score sets mlquantify draws through a seam it never passes a
+    # seed to (ADR-0004). An unseeded draw there is what disguised ADR-0001's
+    # defect, so this is a correctness check and not a convenience.
+    pd.testing.assert_frame_equal(run_sweep(smoke_spec), run_sweep(smoke_spec))
+
+
+def test_the_bags_a_cell_draws_do_not_depend_on_the_reference_before_them(smoke_spec):
+    # The baseline quantifier reads no reference score set at all, so its
+    # estimate is a function of the bag alone. The bags used to be drawn from
+    # the stream the reference had just been drawn from, which made every bag
+    # in the sweep a function of how large a reference set preceded it — one
+    # draw's parameters reaching into another draw's numbers.
+    bags_only = plain_only(smoke_spec, {runs.BASELINE_QUANTIFIER: CC})
+    with_a_bigger_reference = dataclasses.replace(
+        bags_only, reference_size=bags_only.reference_size * 2
+    )
+
+    pd.testing.assert_frame_equal(
+        run_sweep(bags_only), run_sweep(with_a_bigger_reference)
+    )
+
+
+def test_the_number_of_workers_does_not_change_the_runs(smoke_spec):
+    # The published sweep runs at n_jobs=-1. A seed derived from a cell through
+    # Python's own ``hash`` would be salted per process, so every worker would
+    # draw its own scores and the property above would hold only in the one
+    # configuration nobody runs.
+    #
+    # One meta-quantifier arm and one base quantifier: what has to cross the
+    # process boundary is the derivation, once per draw, and the rest of the
+    # registry would only buy the same crossing again at ten times the cost.
+    spec = dataclasses.replace(
+        smoke_spec,
+        base_quantifiers={"DyS": smoke_spec.base_quantifiers["DyS"]},
+        method_simulators={runs.UNIFORM: smoke_spec.method_simulators[runs.UNIFORM]},
+        cells=grid((runs.UNIFORM,), (0.2, 0.8), (0.4,)),
+    )
+
+    pd.testing.assert_frame_equal(run_sweep(spec), run_sweep(spec, n_jobs=2))
 
 
 # ---------------------------------------------------------------------------
