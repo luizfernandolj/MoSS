@@ -20,6 +20,7 @@ import runs
 import sweep
 from sweep import (
     BaselineEstimator,
+    CandidateEstimator,
     MetaEstimator,
     ReferenceEstimator,
     ReferenceScoreSet,
@@ -27,6 +28,7 @@ from sweep import (
     run_cell,
     run_sweep,
 )
+from tests.score_sets import UNMATCHABLE, FixedSimulator, scored
 from utils.simulators import UniformSimulator
 
 
@@ -117,7 +119,7 @@ def test_a_spec_that_would_silently_drop_the_baseline_quantifier_is_rejected(smo
 # One estimator interface, one adapter per calling convention
 # ---------------------------------------------------------------------------
 #
-# mlquantify asks for a bag's prevalence in three different ways, and the three
+# What a method reads decides how it is asked for an estimate, and the four
 # adapters below are the whole of what differs between them. The tests assert
 # the convention itself — which inputs an adapter reads — rather than a number
 # recomputed the way the code computes it.
@@ -128,24 +130,15 @@ def test_a_spec_that_would_silently_drop_the_baseline_quantifier_is_rejected(smo
 BAG_PREVALENCE = 0.3
 
 
-def separated_scores(n, prevalence):
-    """Scores so cleanly separated that the true prevalence is unmistakable."""
-    n_positive = round(n * prevalence)
-    positive = np.tile([0.05, 0.95], (n_positive, 1))
-    negative = np.tile([0.95, 0.05], (n - n_positive, 1))
-    labels = np.concatenate((np.ones(n_positive, dtype=int), np.zeros(n - n_positive, dtype=int)))
-    return np.vstack((positive, negative)), labels
-
-
 @pytest.fixture
 def bag():
-    scores, _ = separated_scores(100, BAG_PREVALENCE)
+    scores, _ = scored(100, BAG_PREVALENCE)
     return scores
 
 
 @pytest.fixture
 def reference():
-    scores, labels = separated_scores(400, 0.5)
+    scores, labels = scored(400, 0.5)
     return ReferenceScoreSet(scores, labels)
 
 
@@ -215,6 +208,20 @@ def test_a_meta_estimator_draws_with_the_method_simulator_it_was_given(bag, refe
     another = MetaEstimator(DyS, SeededSimulator(seed=2), reference).estimate(bag)
 
     assert one != another
+
+
+def test_a_candidate_estimator_reads_the_real_reference_scores(bag, reference):
+    # The one meta-quantifier arm that does (ADR-0010). The adapter above is
+    # given the same reference and reads only its labels, and the test above
+    # asserts exactly that; here contradicting the scores has to move the
+    # estimate, because they are one of the candidates being chosen between.
+    # The simulated candidates cannot be matched, so whatever the estimate is,
+    # they did not produce it.
+    simulators = (FixedSimulator(**UNMATCHABLE),)
+
+    assert CandidateEstimator(DyS, simulators, reference).estimate(
+        bag
+    ) != CandidateEstimator(DyS, simulators, contradicted(reference)).estimate(bag)
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +399,25 @@ def test_a_sweep_runs_its_cells_over_several_processes(smoke_spec):
         smoke_spec,
         base_quantifiers={"DyS": smoke_spec.base_quantifiers["DyS"]},
         method_simulators={runs.NO_METHOD_SIMULATOR: None},
+        cells=grid((runs.UNIFORM,), (0.2, 0.8), (0.4,)),
+    )
+
+    produced = run_sweep(spec, n_jobs=2)
+
+    assert len(produced) == len(spec.cells) * spec.repetitions
+    assert produced["estimated_prevalence"].notna().all()
+
+
+def test_the_arm_that_searches_every_candidate_survives_the_worker_boundary(smoke_spec):
+    # It holds several simulators where the other arms hold one, and builds a
+    # meta-quantifier per estimate that must not carry anything over between
+    # them (ADR-0010). Both are properties a single process can hide.
+    spec = dataclasses.replace(
+        smoke_spec,
+        base_quantifiers={"DyS": smoke_spec.base_quantifiers["DyS"]},
+        method_simulators={
+            runs.ALL_SIMULATORS: smoke_spec.method_simulators[runs.ALL_SIMULATORS]
+        },
         cells=grid((runs.UNIFORM,), (0.2, 0.8), (0.4,)),
     )
 

@@ -59,7 +59,15 @@ SIMULATORS = (UNIFORM, MVN, DIRICHLET)
 
 #: The sweep's arm that uses no meta-quantifier, and so no method simulator.
 NO_METHOD_SIMULATOR = "none"
-METHOD_SIMULATORS = SIMULATORS + (NO_METHOD_SIMULATOR,)
+
+#: The arm whose meta-quantifier commits to no single method simulator: it
+#: chooses among the candidate score sets of all three, and the real reference
+#: scores besides. A value in this column rather than a fourth simulator
+#: because it is what produced the candidates the estimate came from, which is
+#: the question this column answers (ADR-0010).
+ALL_SIMULATORS = "all"
+
+METHOD_SIMULATORS = SIMULATORS + (ALL_SIMULATORS, NO_METHOD_SIMULATOR)
 
 #: Every base quantifier the sweep runs. ``tests/test_sweep.py`` asserts this
 #: matches ``sweep.BASE_QUANTIFIERS`` exactly, so adding one there without
@@ -80,6 +88,11 @@ BASE_QUANTIFIERS = (
 
 #: How a simulator is spelled in a figure legend.
 SIMULATOR_LABELS = {UNIFORM: "Uniform", MVN: "MVN", DIRICHLET: "Dirichlet"}
+
+#: The same, for the column that also names the arm belonging to no one
+#: simulator. Separate from the map above because that one answers "which
+#: simulator drew these scores", which ``all`` is not an answer to.
+METHOD_SIMULATOR_LABELS = {**SIMULATOR_LABELS, ALL_SIMULATORS: "All"}
 
 #: The one base quantifier that never reads a reference score set, so it takes
 #: no meta-quantifier path and always appears once, as a baseline. Named here
@@ -214,7 +227,7 @@ def method_label(base_quantifier, method_simulator):
         )
     if method_simulator == NO_METHOD_SIMULATOR:
         return str(base_quantifier)
-    return f"QuaDapt-{SIMULATOR_LABELS[method_simulator]}({base_quantifier})"
+    return f"QuaDapt-{METHOD_SIMULATOR_LABELS[method_simulator]}({base_quantifier})"
 
 
 def method_labels(runs):

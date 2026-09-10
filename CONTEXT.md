@@ -94,7 +94,10 @@ _Avoid_: train scores (ambiguous once the reference may be simulated)
 
 **Candidate score set**:
 One reference score set among the several a meta-quantifier evaluates before
-picking one.
+picking one. Usually simulated, but not necessarily: the meta-quantifier that
+searches every simulator's candidates counts the real reference scores among
+them, so that "none of the substitutes beat the real thing" is an answer it
+can give (ADR-0010).
 
 ### Experiments
 

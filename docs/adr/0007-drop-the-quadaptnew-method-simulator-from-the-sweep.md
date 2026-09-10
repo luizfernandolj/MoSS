@@ -1,5 +1,10 @@
 # Drop the QuadaptNew method simulator from the sweep
 
+> **Superseded by ADR-0010.** The rewrite this ADR scoped to its own change has
+> landed: this meta-quantifier is back in the sweep as the `all` arm. All below
+> describes why it was absent, and still explains any result file produced
+> before that — but the sweep no longer runs without it.
+
 `QuadaptNew` copied mlquantify 0.2.0's mixture-search helper and calls
 `best_mixture` on a matching quantifier instance. 0.5.1 removed that method,
 replacing it with internal helpers on the meta-quantifier. Nothing in the

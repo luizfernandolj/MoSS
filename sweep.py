@@ -17,7 +17,7 @@ it runs matched simulator pairs only, which no cross-product describes.
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Mapping, Optional, Sequence
+from typing import Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -29,7 +29,7 @@ from mlquantify.matching import DyS, HDy, SMM, SORD
 from mlquantify.utils import get_prev_from_labels
 
 import runs
-from utils.meta_quantifier import QuaDaptWithSimulator
+from utils.meta_quantifier import QuaDaptOverCandidates, QuaDaptWithSimulator
 from utils.simulators import (
     DirichletSimulator,
     MVNSimulator,
@@ -55,10 +55,11 @@ class Estimator(ABC):
     """One method's estimate of one bag's prevalence.
 
     A *method* is a base quantifier together with the method simulator, if any,
-    of the meta-quantifier wrapping it. mlquantify asks for that estimate in
-    three different ways depending on what the method reads, and the three
-    adapters below are the whole of what differs between them. The sweep holds
-    an ``Estimator`` and does not know which it has.
+    of the meta-quantifier wrapping it. What a method reads decides how it is
+    asked for an estimate — nothing, the real reference score set, its labels
+    alone, or the real scores as one candidate among many — and the adapters
+    below are the whole of what differs between them. The sweep holds an
+    ``Estimator`` and does not know which it has.
     """
 
     @abstractmethod
@@ -113,6 +114,28 @@ class MetaEstimator(Estimator):
     def estimate(self, bag_scores):
         meta = QuaDaptWithSimulator(self.quantifier(), self.method_simulator)
         return _positive_share(meta.aggregate(bag_scores, self.reference.labels))
+
+
+@dataclass(frozen=True)
+class CandidateEstimator(Estimator):
+    """A meta-quantifier choosing among candidates from every simulator at once.
+
+    The one meta-quantifier arm that *is* handed the real reference scores.
+    The adapter above withholds them on purpose — its method replaces them —
+    but this one has them as a candidate beside the simulated ones, so "no
+    simulated substitute matched this bag better than the real scores" is an
+    answer it can give and the results can carry (ADR-0010).
+    """
+
+    quantifier: type
+    method_simulators: Tuple[ScoreSimulator, ...]
+    reference: ReferenceScoreSet
+
+    def estimate(self, bag_scores):
+        meta = QuaDaptOverCandidates(self.quantifier(), self.method_simulators)
+        return _positive_share(
+            meta.aggregate(bag_scores, self.reference.scores, self.reference.labels)
+        )
 
 
 def _positive_share(prevalences):
@@ -205,9 +228,14 @@ class SweepSpec:
     #: scores, both the reference set and the bags.
     data_simulators: Mapping[str, ScoreSimulator]
 
-    #: Score simulators in their method role, plus the arm that uses no
-    #: meta-quantifier at all, whose simulator is ``None``.
-    method_simulators: Mapping[str, Optional[ScoreSimulator]]
+    #: Score simulators in their method role: one simulator per arm, or a
+    #: sequence of them for an arm whose meta-quantifier chooses among all
+    #: their candidates, or ``None`` for the arm that uses no meta-quantifier
+    #: at all. What each shape means to an estimator is ``estimator_for``'s
+    #: business and nothing else's.
+    method_simulators: Mapping[
+        str, Union[None, ScoreSimulator, Tuple[ScoreSimulator, ...]]
+    ]
 
     #: The base quantifiers, by the name their runs are stored under.
     base_quantifiers: Mapping[str, type]
@@ -285,6 +313,11 @@ def estimator_for(spec, base_quantifier, method_simulator, reference):
 
     if method_simulator == runs.NO_METHOD_SIMULATOR:
         return ReferenceEstimator(quantifier, reference)
+
+    if method_simulator == runs.ALL_SIMULATORS:
+        return CandidateEstimator(
+            quantifier, spec.method_simulators[method_simulator], reference
+        )
 
     return MetaEstimator(
         quantifier, spec.method_simulators[method_simulator], reference
@@ -443,11 +476,16 @@ DATA_SIMULATORS = {
     runs.DIRICHLET: DirichletSimulator(),
 }
 
-#: What a meta-quantifier draws its candidate score sets with, plus the arm
-#: that uses no meta-quantifier at all. "QuadaptNew" is absent on purpose: it
-#: calls a mixture-search helper that mlquantify 0.5.1 removed, and its absence
-#: from the results is not a finding — ADR-0007.
-METHOD_SIMULATORS = {**DATA_SIMULATORS, runs.NO_METHOD_SIMULATOR: None}
+#: What a meta-quantifier draws its candidate score sets with. Three arms name
+#: one simulator each; ``all`` names every one of them, because its
+#: meta-quantifier chooses among all their candidates and the real reference
+#: besides (ADR-0010); and ``none`` names no simulator because it uses no
+#: meta-quantifier. ``estimator_for`` is where those three shapes are read.
+METHOD_SIMULATORS = {
+    **DATA_SIMULATORS,
+    runs.ALL_SIMULATORS: tuple(DATA_SIMULATORS.values()),
+    runs.NO_METHOD_SIMULATOR: None,
+}
 
 BASE_QUANTIFIERS = {
     "DyS": DyS,

@@ -16,8 +16,11 @@ import runs
 PUBLISHED_BASE_QUANTIFIERS = ("TAC", "TMAX", "T50", "HDy", "TX", "TMS", "DyS", "SMM")
 
 #: The three method simulators, which is the comparison the study is about.
-#: It used to be uniform against ``QuadaptNew``; that arm is gone (ADR-0007)
-#: and its absence from these figures is not a finding.
+#: The sweep also runs the ``all`` arm, whose meta-quantifier chooses among
+#: every simulator's candidates and the real reference scores besides
+#: (ADR-0010). It is left out of these figures by choice and not by accident:
+#: it is in the runs, and drawing it is a decision about what the paper
+#: compares rather than a filter to repair.
 PUBLISHED_METHOD_SIMULATORS = runs.SIMULATORS
 
 REFERENCE_SIMULATOR = runs.UNIFORM

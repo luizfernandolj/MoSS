@@ -4,8 +4,10 @@
 .venv/bin/python -m pytest
 ```
 
-That is the whole suite. It runs in about twenty seconds and needs no data
-beyond what is committed.
+That is the whole suite. It runs in about thirty-five seconds and needs no data
+beyond what is committed. Half of that is the smoke sweep, which several tests
+run and which doubled in cost when the arm that searches every candidate
+rejoined it (ADR-0010).
 
 ## What is in it
 
@@ -29,7 +31,7 @@ in an ADR rather than a command to reach for.
 **Sweep** (`tests/test_sweep.py`). That the grid is a parameter and not a
 module global; that the spec's vocabulary is the one `runs` stores, so a sweep
 cannot spend hours producing runs no reader can name; the calling convention
-each of the three estimator adapters follows; and the regression for ADR-0001's
+each of the four estimator adapters follows; and the regression for ADR-0001's
 second defect — a failing estimator records a missing run rather than the
 *previous* method's number. Verified by reintroducing the defect: three tests
 fail.
@@ -42,6 +44,24 @@ quantifier, produces an estimate for all of them. Note what that smoke test has
 to assert: a broken method simulator now reaches the results as missing runs
 rather than as an exception, so "completes without raising" would no longer
 catch it.
+
+**Candidate search** (`tests/test_candidate_search.py`). The arm that chooses
+among candidate score sets rather than committing to one method simulator
+(ADR-0010): that the candidates are a *list* and not a sequence of mutations of
+the estimator, that the real reference scores are among them, that the base
+quantifier is handed the candidate matching the bag, and that the classes come
+from the data rather than being 0 and 1. Which candidate wins is asserted in
+both directions — a search that always returned the real reference would pass
+one of those tests — and never by recomputing the distances the way the code
+computes them: each pits a candidate whose mixture reproduces the bag exactly
+against one whose mixtures are all the same distribution.
+
+One test there guards a copy rather than a behaviour. The size and prevalence a
+candidate is drawn at are literals inside mlquantify's own `aggregate`, with no
+parameter to forward, so the arm restates them — and a restated upstream choice
+that nothing compares against the original is the trap ADR-0007 caught. That
+test drives the library's own meta-quantifier and records what it asks its
+`MoSS` seam for.
 
 **Simulators** (`tests/test_simulators.py`). The contract all three score
 simulators meet, asserted on all three: rows sum to one, class counts match the

@@ -148,10 +148,22 @@ def test_the_uniform_simulator_is_binary_only():
         UniformSimulator()(900, [0.2, 0.3, 0.5], 0.5)
 
 
+def registered_simulators():
+    """Every simulator the two registries hold, however an arm names them.
+
+    A method-simulator arm names one simulator, or several of them when its
+    meta-quantifier searches every one's candidates (ADR-0010), or none at all
+    when it uses no meta-quantifier. What is under test is that the things at
+    the bottom of all three shapes are the same kind of thing.
+    """
+    for registered in {**DATA_SIMULATORS, **METHOD_SIMULATORS}.values():
+        if registered is None:
+            continue
+        yield from registered if isinstance(registered, tuple) else (registered,)
+
+
 @pytest.mark.parametrize(
-    "simulator",
-    [s for s in {**DATA_SIMULATORS, **METHOD_SIMULATORS}.values() if s is not None],
-    ids=lambda s: type(s).__name__,
+    "simulator", list(registered_simulators()), ids=lambda s: type(s).__name__
 )
 def test_every_registered_simulator_is_reached_through_the_one_interface(simulator):
     # The registries used to hold bare functions on one side and meta-quantifier

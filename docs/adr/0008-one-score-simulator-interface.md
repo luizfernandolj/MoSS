@@ -62,7 +62,10 @@ now, on all three implementations.
   it named no longer exist; nothing else about it changed, and rewriting its
   `best_mixture` against 0.5.1's API remains its own change. It is therefore
   the one place a simulator is still chosen by subclass identity rather than by
-  parameter, and it is quarantined.
+  parameter, and it is quarantined. **ADR-0010 has since made that change**:
+  the class is gone, and `QuaDaptOverCandidates` takes the simulators it
+  searches as a constructor argument, as its sibling takes the one it uses.
+  Nothing chooses a simulator by subclass identity any more.
 - `QuaDaptWithSimulator` forwards `measure`, `merging_factors` and `strategy`
   to the library rather than restating their defaults, so an upstream change to
   any of them is not silently overridden here.

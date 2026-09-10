@@ -38,6 +38,11 @@ They are now three implementations of `Estimator.estimate(bag_scores)`:
 `estimator_for` is the one place that knows which convention a
 (base quantifier, method simulator) pair takes.
 
+**Amended by ADR-0010**: there is a fourth adapter. `CandidateEstimator` calls
+`aggregate(bag, reference_scores, reference_labels)` on a meta-quantifier — the
+real scores as one candidate among the simulated ones — which is a convention
+none of the three above covers.
+
 ## A failing run is recorded, not skipped and not inherited
 
 ADR-0001's second defect: a caught exception was logged and fell through to the

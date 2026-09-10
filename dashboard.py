@@ -70,11 +70,15 @@ runs_agg = pre_aggregate(synthetic_runs)
 # ============================
 # 2) Cores e legendas
 # ============================
+#: One palette per method simulator the runs can carry, ``runs`` being what
+#: says which those are: this dashboard draws whatever arms are in the data,
+#: so an arm without a palette here is a crash rather than a missing line.
 method_simulator_palettes = {
     runs.NO_METHOD_SIMULATOR: ["#6B7280", "#9CA3AF", "#D1D5DB", "#4B5563", "#E5E7EB"],
     runs.UNIFORM: ["#0047AB", "#0057D9", "#1D4ED8", "#2563EB", "#3B82F6"],
     runs.MVN: ["#00FF00", "#32CD32", "#00FA9A", "#90EE90", "#98FB98"],
     runs.DIRICHLET: ["#8B00FF", "#9400D3", "#BA55D3", "#DA70D6", "#EE82EE"],
+    runs.ALL_SIMULATORS: ["#EA580C", "#F97316", "#FB923C", "#C2410C", "#FDBA74"],
 }
 
 legend_text = {
@@ -82,6 +86,7 @@ legend_text = {
     runs.UNIFORM: "Simulador do método: Uniforme (azul)",
     runs.MVN: "Simulador do método: MVN (verde)",
     runs.DIRICHLET: "Simulador do método: Dirichlet (roxo)",
+    runs.ALL_SIMULATORS: "Todos os simuladores e a referência real (laranja)",
 }
 
 st.markdown("### Simulador do método e cores")
