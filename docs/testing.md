@@ -39,6 +39,32 @@ it guarantees (see Determinism below); and the regression for ADR-0001's second
 defect — a failing estimator records a missing run rather than the *previous*
 method's number. Verified by reintroducing the defect: three tests fail.
 
+Also `measure`: `None` forwards nothing to either meta-quantifier adapter
+rather than restating the library's own default, and a spec naming anything
+outside `runs.MEASURES` is rejected the same way an unknown base quantifier is
+(ADR-0012). And the distance-measure ablation (`run_measure_ablation`): that
+it reruns a spec once per measure holding everything else fixed, stamps each
+run with the measure that produced it, and reuses `run_sweep`'s own
+missing-run reporting rather than a copy of it.
+
+**Validating a produced sweep** (`tests/test_sweep.py`, ADR-0012). `sweep.
+validate` is what #9 asked the re-run's own output to be checked against
+before anything is plotted: a run tying the estimate stored immediately before
+it *within its own (method simulator, cell, repetition) group* (ADR-0001's
+second defect — a tie across a group boundary is tested separately and is not
+flagged, since it describes two unrelated bags), and a group of base
+quantifiers under one meta-quantifier arm with no real spread between them
+(the first). Both are tested against fabricated defects and against
+`SMOKE_SWEEP`'s real output, which is where the genuine ties this check has to
+tolerate were found in the first place — see ADR-0012 for what they are and
+why they are not the defect.
+
+`sweep.validate_and_save` is the validate-then-report-then-save sequence
+`_main` needs on both its branches, tested directly rather than through
+`_main`: that a defective frame never reaches `runs.save` (no file exists
+afterwards), that the missing-run count reaches stdout, and that a clean frame
+is saved through `runs.save` and nothing else.
+
 **Meta-quantifier** (`tests/test_meta_quantifier.py`). That different base
 quantifiers under one meta-quantifier produce different estimates — the
 property whose absence went unnoticed across 3.75M runs — asserted twice, at
@@ -79,11 +105,13 @@ stands for, and the call mlquantify's meta-quantifier makes is accepted
 verbatim. These are what a per-simulator signature had no way to state — see
 ADR-0008 for the off-by-one they would have caught.
 
-**Runs module** (`tests/test_runs.py`). The schema of the two tables, that
+**Runs module** (`tests/test_runs.py`). The schema of the three tables, that
 they share an estimator block (ADR-0003), that runs survive a Parquet round
 trip without a caller ever naming a file, and that the vocabulary `runs`
 publishes matches the sweep's registries exactly. A run the module refuses to
-save is one a reader would have had to guess about.
+save is one a reader would have had to guess about. The measure-ablation table
+(ADR-0012) is asserted to be the synthetic table's own columns plus `measure`
+and nothing else, so the two cannot drift apart silently.
 
 **Renderers** (`tests/test_renderers.py`). Every method name the figure export
 filters on exists in the runs it filters. This is the regression for the

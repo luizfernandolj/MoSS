@@ -15,6 +15,12 @@ dataset, so they live in the synthetic table alone rather than as columns that
 are null for half the rows. The method simulator is in **both**: it describes
 the estimator, not the data.
 
+A third table, not a third principle: the measure-ablation table (ADR-0012) is
+the synthetic table's own columns plus ``measure``, because that is the one
+column the ablation adds and the published sweep never varies. Giving it a
+kind of its own keeps ``measure`` out of the synthetic table, where it would be
+the same value on every row.
+
 Storage is Parquet under a layout callers never name. They ask for a *kind*.
 The previous single CSV reached 291 MB, was split three ways to clear a
 hosting file-size limit, and that split then leaked into every reader — which
@@ -46,7 +52,14 @@ import pandas as pd
 
 SYNTHETIC = "synthetic"
 REAL_DATA = "real-data"
-KINDS = (SYNTHETIC, REAL_DATA)
+#: The distance-measure ablation (ADR-0012, #9): the synthetic experiment's
+#: reduced-grid cousin, run once per entry in :data:`MEASURES` instead of once
+#: at the library's default. A third kind rather than a column on
+#: ``SYNTHETIC`` that is constant for every published run: ADR-0003 keeps a
+#: column out of a table when it means nothing for most of that table's rows,
+#: and ``measure`` would be exactly that everywhere except this table.
+MEASURE_ABLATION = "measure-ablation"
+KINDS = (SYNTHETIC, REAL_DATA, MEASURE_ABLATION)
 
 # --- Vocabulary ------------------------------------------------------------
 
@@ -99,24 +112,36 @@ METHOD_SIMULATOR_LABELS = {**SIMULATOR_LABELS, ALL_SIMULATORS: "All"}
 #: because every reader that draws it needs the same answer.
 BASELINE_QUANTIFIER = "CC"
 
+#: The distance measures a meta-quantifier's mixture search can minimise, named
+#: as upstream spells them (``utils.meta_quantifier`` dispatches on the same
+#: four; ``tests/test_sweep.py`` asserts the two lists agree). Fixed for the
+#: published sweep and the one thing the measure-ablation table varies
+#: (ADR-0012).
+MEASURES = ("topsoe", "hellinger", "probsymm", "sord")
+
 # --- Schema ----------------------------------------------------------------
 
 #: Identical in both tables, and first in both, so one label function and one
 #: statistical comparison serve synthetic and real-data runs alike.
 ESTIMATOR_COLUMNS = ("base_quantifier", "method_simulator")
 
+#: The data block the synthetic experiment and the measure-ablation table
+#: share. The ablation is the synthetic experiment with one estimator-block
+#: column added (``measure``), not a different experiment, so it is spelled
+#: once here rather than copied (ADR-0012).
+_SYNTHETIC_DATA_COLUMNS = (
+    "reference_simulator",
+    "reference_merging_factor",
+    "bag_simulator",
+    "bag_merging_factor",
+    "target_prevalence",
+    "true_prevalence",
+    "estimated_prevalence",
+    "repetition",
+)
+
 _COLUMNS = {
-    SYNTHETIC: ESTIMATOR_COLUMNS
-    + (
-        "reference_simulator",
-        "reference_merging_factor",
-        "bag_simulator",
-        "bag_merging_factor",
-        "target_prevalence",
-        "true_prevalence",
-        "estimated_prevalence",
-        "repetition",
-    ),
+    SYNTHETIC: ESTIMATOR_COLUMNS + _SYNTHETIC_DATA_COLUMNS,
     REAL_DATA: ESTIMATOR_COLUMNS
     + (
         "dataset",
@@ -125,6 +150,7 @@ _COLUMNS = {
         "estimated_prevalence",
         "repetition",
     ),
+    MEASURE_ABLATION: ESTIMATOR_COLUMNS + ("measure",) + _SYNTHETIC_DATA_COLUMNS,
 }
 
 _VOCABULARIES = {
@@ -132,6 +158,7 @@ _VOCABULARIES = {
     "method_simulator": METHOD_SIMULATORS,
     "reference_simulator": SIMULATORS,
     "bag_simulator": SIMULATORS,
+    "measure": MEASURES,
 }
 
 # --- Storage ---------------------------------------------------------------
@@ -140,7 +167,11 @@ _VOCABULARIES = {
 #: figure script launched from different places read the same runs.
 ROOT = Path(__file__).resolve().parent / "results"
 
-_FILES = {SYNTHETIC: "runs/synthetic.parquet", REAL_DATA: "runs/real-data.parquet"}
+_FILES = {
+    SYNTHETIC: "runs/synthetic.parquet",
+    REAL_DATA: "runs/real-data.parquet",
+    MEASURE_ABLATION: "runs/measure-ablation.parquet",
+}
 
 
 def columns_for(kind):

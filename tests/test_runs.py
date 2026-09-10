@@ -47,6 +47,21 @@ def test_only_the_synthetic_table_carries_the_data_vocabulary():
     assert data_columns.isdisjoint(runs.columns_for(runs.REAL_DATA))
 
 
+def test_only_the_measure_ablation_table_carries_measure():
+    # The published sweep never varies it, so a column here would be one value
+    # repeated on every row (ADR-0012).
+    assert "measure" in runs.columns_for(runs.MEASURE_ABLATION)
+    assert "measure" not in runs.columns_for(runs.SYNTHETIC)
+    assert "measure" not in runs.columns_for(runs.REAL_DATA)
+
+
+def test_the_measure_ablation_table_is_the_synthetic_table_plus_measure():
+    ablation = list(runs.columns_for(runs.MEASURE_ABLATION))
+    ablation.remove("measure")
+
+    assert ablation == list(runs.columns_for(runs.SYNTHETIC))
+
+
 # ---------------------------------------------------------------------------
 # Storage: Parquet, and its layout invisible to callers
 # ---------------------------------------------------------------------------
@@ -66,6 +81,14 @@ def test_real_data_runs_survive_a_round_trip(results_root, real_data_runs):
     loaded = runs.load(runs.REAL_DATA, root=results_root)
 
     pd.testing.assert_frame_equal(loaded, real_data_runs)
+
+
+def test_measure_ablation_runs_survive_a_round_trip(results_root, measure_ablation_runs):
+    runs.save(measure_ablation_runs, runs.MEASURE_ABLATION, root=results_root)
+
+    loaded = runs.load(runs.MEASURE_ABLATION, root=results_root)
+
+    pd.testing.assert_frame_equal(loaded, measure_ablation_runs)
 
 
 def test_the_two_kinds_do_not_overwrite_each_other(
@@ -197,6 +220,13 @@ def test_saving_an_unknown_base_quantifier_is_rejected(results_root, synthetic_r
 
     with pytest.raises(ValueError, match="base_quantifier"):
         runs.save(synthetic_runs, runs.SYNTHETIC, root=results_root)
+
+
+def test_saving_an_unknown_measure_is_rejected(results_root, measure_ablation_runs):
+    measure_ablation_runs.loc[0, "measure"] = "euclidean"
+
+    with pytest.raises(ValueError, match="measure"):
+        runs.save(measure_ablation_runs, runs.MEASURE_ABLATION, root=results_root)
 
 
 # ---------------------------------------------------------------------------

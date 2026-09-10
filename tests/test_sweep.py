@@ -21,14 +21,20 @@ import sweep
 from sweep import (
     BaselineEstimator,
     CandidateEstimator,
+    DefectSignatureError,
     MetaEstimator,
     ReferenceEstimator,
     ReferenceScoreSet,
+    collapsed_method_simulator_groups,
     grid,
     run_cell,
+    run_measure_ablation,
     run_sweep,
+    stale_estimate_rows,
+    validate,
 )
 from tests.score_sets import UNMATCHABLE, FixedSimulator, scored
+from utils.meta_quantifier import HISTOGRAM_MEASURES, QuaDaptWithSimulator
 from utils.simulators import MVNSimulator, UniformSimulator
 
 
@@ -95,6 +101,30 @@ def test_the_published_sweep_speaks_the_stored_vocabulary():
     assert set(spec.data_simulators) == set(runs.SIMULATORS)
     assert set(spec.method_simulators) == set(runs.METHOD_SIMULATORS)
     assert set(spec.base_quantifiers) == set(runs.BASE_QUANTIFIERS)
+
+
+def test_runs_measures_matches_the_meta_quantifier_s_own_dispatch():
+    # Not a translation table either: utils.meta_quantifier dispatches "sord"
+    # separately from its histogram measures, so the two lists are asserted to
+    # agree rather than one being copied from the other.
+    assert set(runs.MEASURES) == set(HISTOGRAM_MEASURES) | {"sord"}
+
+
+def test_the_published_sweep_runs_ten_repetitions():
+    # The re-run this ticket exists to produce (#9): three was the number
+    # ADR-0001 voided every run drawn under.
+    assert sweep.SYNTHETIC_SWEEP.repetitions == 10
+
+
+def test_the_published_sweep_does_not_restate_the_library_s_default_measure():
+    # ``None`` forwards nothing (:func:`sweep._quadapt_kwargs`), which is what
+    # keeps this project from freezing a copy of upstream's own default — the
+    # trap ADR-0007 caught the last time it held one (ADR-0012).
+    assert sweep.SYNTHETIC_SWEEP.measure is None
+
+
+def test_the_published_ablation_grid_is_smaller_than_the_published_grid():
+    assert len(sweep.MEASURE_ABLATION_GRID) < len(sweep.SYNTHETIC_SWEEP.cells)
 
 
 def test_a_spec_naming_a_quantifier_the_runs_module_cannot_store_is_rejected(smoke_spec):
@@ -271,6 +301,73 @@ def test_two_candidate_estimators_on_different_seeds_draw_different_candidates(
     another = CandidateEstimator(DyS, (UniformSimulator(),), rejected_reference, 2)
 
     assert one.estimate(bag) != another.estimate(bag)
+
+
+# ---------------------------------------------------------------------------
+# The distance measure both meta-quantifier adapters forward (#9, ADR-0012)
+# ---------------------------------------------------------------------------
+#
+# ``measure`` defaults to ``None`` rather than to the library's own default, so
+# that leaving it out never freezes a copy of upstream's choice — the trap
+# ADR-0007 caught the last time this project held one. These tests are about
+# the *wiring*: that a measure handed to an adapter is the one the underlying
+# meta-quantifier actually receives, not a recomputation of what either measure
+# should produce.
+
+
+def test_a_meta_estimator_with_no_measure_leaves_the_library_default_in_place(
+    bag, reference
+):
+    simulator = UniformSimulator()
+
+    with_none = MetaEstimator(DyS, simulator, reference, METHOD_SEED).estimate(bag)
+    with_default = MetaEstimator(
+        DyS, simulator, reference, METHOD_SEED, measure="topsoe"
+    ).estimate(bag)
+
+    assert with_none == pytest.approx(with_default)
+
+
+def test_a_meta_estimator_forwards_its_measure_to_the_meta_quantifier(bag, reference):
+    simulator = UniformSimulator()
+
+    direct = QuaDaptWithSimulator(
+        DyS(), simulator, METHOD_SEED, measure="hellinger"
+    ).aggregate(bag, reference.labels)
+    via_estimator = MetaEstimator(
+        DyS, simulator, reference, METHOD_SEED, measure="hellinger"
+    ).estimate(bag)
+
+    assert via_estimator == pytest.approx(direct[1])
+
+
+def test_a_candidate_estimator_forwards_its_measure_to_the_meta_quantifier(
+    bag, rejected_reference
+):
+    # utils.meta_quantifier dispatches on ``measure`` itself and raises a clean
+    # ValueError for anything it does not recognise — a deterministic proof
+    # that the value reached it rather than being silently ignored.
+    estimator = CandidateEstimator(
+        DyS,
+        (UniformSimulator(),),
+        rejected_reference,
+        METHOD_SEED,
+        measure="not-a-real-measure",
+    )
+
+    with pytest.raises(ValueError, match="measure"):
+        estimator.estimate(bag)
+
+
+def test_a_spec_rejects_an_unknown_measure(smoke_spec):
+    with pytest.raises(ValueError, match="measure"):
+        dataclasses.replace(smoke_spec, measure="euclidean")
+
+
+def test_a_spec_with_no_measure_is_accepted(smoke_spec):
+    # ``None`` is the published sweep's own choice (ADR-0012), not an
+    # oversight, so it must not be rejected as "unknown".
+    dataclasses.replace(smoke_spec, measure=None)
 
 
 # ---------------------------------------------------------------------------
@@ -621,3 +718,335 @@ def test_missing_runs_survive_the_results_module(smoke_spec, results_root):
     labelled = runs.load_labelled(runs.SYNTHETIC, root=results_root)
     assert labelled["estimated_prevalence"].isna().all()
     assert labelled["absolute_error"].isna().all()
+
+
+# ---------------------------------------------------------------------------
+# The distance-measure ablation (#9, ADR-0012)
+# ---------------------------------------------------------------------------
+
+
+def test_the_published_ablation_spec_excludes_the_baseline_and_its_arm():
+    # CC and the no-method-simulator arm never read ``measure``, so running
+    # them once per entry of runs.MEASURES would only repeat the same rows.
+    spec = sweep.MEASURE_ABLATION_SWEEP
+
+    assert runs.BASELINE_QUANTIFIER not in spec.base_quantifiers
+    assert runs.NO_METHOD_SIMULATOR not in spec.method_simulators
+
+
+@pytest.fixture(scope="module")
+def ablation_spec():
+    """A spec small enough for this suite, shaped like the published ablation.
+
+    Built from ``sweep.SMOKE_SWEEP`` directly rather than the ``smoke_spec``
+    fixture, so this can be module-scoped the way ``ablation_runs`` below
+    needs it to be. Excludes the arms that never read ``measure``, the same
+    way ``sweep.MEASURE_ABLATION_SWEEP`` does — a spec that kept them would
+    still run, just wastefully, repeating their rows once per measure.
+    """
+    smoke = sweep.SMOKE_SWEEP
+    return dataclasses.replace(
+        smoke,
+        method_simulators={
+            name: simulator
+            for name, simulator in smoke.method_simulators.items()
+            if name != runs.NO_METHOD_SIMULATOR
+        },
+        base_quantifiers={
+            name: quantifier
+            for name, quantifier in smoke.base_quantifiers.items()
+            if name != runs.BASELINE_QUANTIFIER
+        },
+    )
+
+
+@pytest.fixture(scope="module")
+def ablation_runs(ablation_spec):
+    """The ablation spec's runs, computed once and shared by the tests below."""
+    return run_measure_ablation(ablation_spec, measures=("topsoe", "sord"))
+
+
+def test_running_the_ablation_produces_a_frame_the_results_module_recognises(
+    ablation_runs, results_root
+):
+    assert tuple(ablation_runs.columns) == runs.columns_for(runs.MEASURE_ABLATION)
+    runs.save(ablation_runs, runs.MEASURE_ABLATION, root=results_root)
+
+
+def test_the_ablation_stamps_every_run_with_the_measure_that_produced_it(
+    ablation_runs,
+):
+    assert set(ablation_runs["measure"]) == {"topsoe", "sord"}
+    assert set(ablation_runs.groupby("measure").size()) == {len(ablation_runs) // 2}
+
+
+def test_the_ablation_holds_everything_but_the_measure_fixed(ablation_runs):
+    # Two measures on the same spec differ in exactly the one field
+    # ``run_measure_ablation`` is meant to vary.
+    without_measure = ablation_runs.drop(columns=["measure"])
+    topsoe = without_measure[ablation_runs["measure"] == "topsoe"].reset_index(
+        drop=True
+    )
+    sord = without_measure[ablation_runs["measure"] == "sord"].reset_index(drop=True)
+
+    pd.testing.assert_frame_equal(
+        topsoe.drop(columns=["estimated_prevalence"]),
+        sord.drop(columns=["estimated_prevalence"]),
+    )
+
+
+def test_the_ablation_reuses_run_sweep_s_missing_run_reporting(ablation_spec):
+    spec = dataclasses.replace(
+        ablation_spec, base_quantifiers={"DyS": FailingQuantifier}
+    )
+
+    with pytest.warns(sweep.MissingRunWarning):
+        produced = run_measure_ablation(spec, measures=("topsoe",))
+
+    assert produced["estimated_prevalence"].isna().all()
+
+
+# ---------------------------------------------------------------------------
+# Validating a produced sweep against ADR-0001's two defect signatures (#9)
+# ---------------------------------------------------------------------------
+
+
+def cell_row(**overrides):
+    """A minimal synthetic run row, everything but ``overrides`` held fixed."""
+    row = {
+        "base_quantifier": "DyS",
+        "method_simulator": runs.UNIFORM,
+        "reference_simulator": runs.UNIFORM,
+        "reference_merging_factor": 0.5,
+        "bag_simulator": runs.UNIFORM,
+        "bag_merging_factor": 0.5,
+        "target_prevalence": 0.4,
+        "true_prevalence": 0.4,
+        "estimated_prevalence": 0.37,
+        "repetition": 1,
+    }
+    row.update(overrides)
+    return row
+
+
+def synthetic_frame(rows):
+    return pd.DataFrame(rows, columns=list(runs.columns_for(runs.SYNTHETIC)))
+
+
+def test_a_run_tying_its_predecessor_is_a_stale_estimate_candidate():
+    # The defect exactly: a different method's row carrying the number the one
+    # before it computed.
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="DyS", estimated_prevalence=0.37),
+            cell_row(base_quantifier="HDy", estimated_prevalence=0.37),
+        ]
+    )
+
+    stale = stale_estimate_rows(frame)
+
+    assert len(stale) == 1
+    assert stale.iloc[0]["base_quantifier"] == "HDy"
+
+
+def test_a_tie_across_a_group_boundary_is_not_a_stale_estimate_candidate():
+    # The last row of one (method simulator, cell, repetition) group and the
+    # first row of the next describe different bags and different methods
+    # entirely; a coincidence there says nothing about the defect, which is
+    # one base quantifier's row inheriting the one *before it in its own
+    # group*. Different repetitions here, so this is the same cell and method
+    # simulator either side of the boundary — the closest a real tie could
+    # get to one without being in the same group.
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="DyS", repetition=1, estimated_prevalence=0.37),
+            cell_row(base_quantifier="HDy", repetition=2, estimated_prevalence=0.37),
+        ]
+    )
+
+    assert stale_estimate_rows(frame).empty
+
+
+def test_a_tie_at_the_merging_extremes_is_a_genuine_tie():
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="DyS", estimated_prevalence=1.0),
+            cell_row(base_quantifier="HDy", estimated_prevalence=1.0),
+        ]
+    )
+
+    assert stale_estimate_rows(frame).empty
+
+
+def test_a_tie_between_two_threshold_policy_quantifiers_is_a_genuine_tie():
+    # MS2 falls back to MS's own thresholds whenever none of its own clear the
+    # reliability filter, and TAC and TX can select the same threshold from a
+    # sparse candidate set — both real, not the stale-estimate defect.
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="TAC", estimated_prevalence=0.42),
+            cell_row(base_quantifier="TX", estimated_prevalence=0.42),
+        ]
+    )
+
+    assert stale_estimate_rows(frame).empty
+
+
+def test_two_missing_runs_in_a_row_are_not_a_stale_estimate_candidate():
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="DyS", estimated_prevalence=None),
+            cell_row(base_quantifier="HDy", estimated_prevalence=None),
+        ]
+    )
+
+    assert stale_estimate_rows(frame).empty
+
+
+def test_a_collapsed_group_of_base_quantifiers_is_flagged():
+    # ADR-0001's first defect: every base quantifier under a meta-quantifier
+    # computed the same thing because the meta-quantifier never consulted it.
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="DyS", method_simulator=runs.MVN),
+            cell_row(base_quantifier="SORD", method_simulator=runs.MVN),
+        ]
+    )
+
+    collapsed = collapsed_method_simulator_groups(frame)
+
+    assert len(collapsed) == 1
+
+
+def test_a_real_spread_across_base_quantifiers_is_not_flagged():
+    frame = synthetic_frame(
+        [
+            cell_row(
+                base_quantifier="DyS", method_simulator=runs.MVN,
+                estimated_prevalence=0.30,
+            ),
+            cell_row(
+                base_quantifier="SORD", method_simulator=runs.MVN,
+                estimated_prevalence=0.60,
+            ),
+        ]
+    )
+
+    assert collapsed_method_simulator_groups(frame).empty
+
+
+def test_the_no_method_simulator_arm_is_exempt_from_the_collapse_check():
+    # CC and a reference estimator never share a meta-quantifier or its
+    # candidates, so nothing about them can collapse the way ADR-0001 records.
+    frame = synthetic_frame(
+        [
+            cell_row(
+                base_quantifier="DyS", method_simulator=runs.NO_METHOD_SIMULATOR,
+                estimated_prevalence=0.40,
+            ),
+            cell_row(
+                base_quantifier="CC", method_simulator=runs.NO_METHOD_SIMULATOR,
+                estimated_prevalence=0.40,
+            ),
+        ]
+    )
+
+    assert collapsed_method_simulator_groups(frame).empty
+
+
+def test_validate_raises_on_a_stale_estimate_candidate():
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="DyS", estimated_prevalence=0.37),
+            cell_row(base_quantifier="HDy", estimated_prevalence=0.37),
+        ]
+    )
+
+    with pytest.raises(DefectSignatureError, match="stale-estimate"):
+        validate(frame)
+
+
+def test_validate_raises_on_a_collapsed_group():
+    # Close but not identical, and spread across three rows rather than two
+    # adjacent ones, so this trips the collapse check and not the stale-tie
+    # check first — the two are not the same signature and this proves
+    # ``validate`` can report either.
+    frame = synthetic_frame(
+        [
+            cell_row(
+                base_quantifier="DyS", method_simulator=runs.MVN,
+                estimated_prevalence=0.400,
+            ),
+            cell_row(
+                base_quantifier="HDy", method_simulator=runs.MVN,
+                estimated_prevalence=0.401,
+            ),
+            cell_row(
+                base_quantifier="SORD", method_simulator=runs.MVN,
+                estimated_prevalence=0.402,
+            ),
+        ]
+    )
+
+    with pytest.raises(DefectSignatureError, match="collapsed-estimate"):
+        validate(frame)
+
+
+def test_validate_passes_the_smoke_sweep(one_cell):
+    # The re-run's own regression: the corrected sweep's output, at the size
+    # this suite can afford to check on every run. ``one_cell`` is
+    # ``SMOKE_SWEEP``'s one cell, which is the whole of what ``run_sweep``
+    # would produce for it.
+    validate(one_cell)
+
+
+# ---------------------------------------------------------------------------
+# validate_and_save: validate, report, then save, in that order (#9)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_and_save_refuses_to_save_a_defective_frame(results_root):
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="DyS", estimated_prevalence=0.37),
+            cell_row(base_quantifier="HDy", estimated_prevalence=0.37),
+        ]
+    )
+
+    with pytest.raises(DefectSignatureError):
+        sweep.validate_and_save(frame, runs.SYNTHETIC, root=results_root)
+
+    # Proof of order, not just of the raise: if saving ran first, a file
+    # would exist for a frame that never passed validation.
+    with pytest.raises(FileNotFoundError):
+        runs.load(runs.SYNTHETIC, root=results_root)
+
+
+def test_validate_and_save_reports_how_many_runs_are_missing(capsys, results_root):
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="DyS", estimated_prevalence=None),
+            cell_row(
+                base_quantifier="DyS",
+                method_simulator=runs.NO_METHOD_SIMULATOR,
+                estimated_prevalence=0.40,
+            ),
+        ]
+    )
+
+    sweep.validate_and_save(frame, runs.SYNTHETIC, root=results_root)
+
+    assert "1 of 2 runs have no estimate" in capsys.readouterr().out
+
+
+def test_validate_and_save_saves_a_clean_frame_through_the_results_module(
+    results_root,
+):
+    frame = synthetic_frame(
+        [cell_row(base_quantifier="DyS", estimated_prevalence=0.37)]
+    )
+
+    path = sweep.validate_and_save(frame, runs.SYNTHETIC, root=results_root)
+
+    assert path == results_root / "runs" / "synthetic.parquet"
+    assert len(runs.load(runs.SYNTHETIC, root=results_root)) == 1

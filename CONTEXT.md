@@ -77,6 +77,13 @@ A quantifier that does not estimate. It selects a reference score set and
 delegates the estimate to a base quantifier.
 _Avoid_: wrapper, ensemble
 
+**Distance measure**:
+What a meta-quantifier's mixture search minimises when it scores a candidate
+score set against a bag. Fixed for the published synthetic experiment
+(ADR-0012); which measure estimates best is the measure-ablation experiment's
+question, not the published grid's.
+_Avoid_: metric, distance function
+
 **Base quantifier**:
 The quantifier a meta-quantifier wraps and delegates its estimate to.
 _Avoid_: inner quantifier, learner, estimator
@@ -116,3 +123,9 @@ that score-distribution difficulty is a controlled variable.
 **Real-data experiment**:
 The sweep where the reference comes from a classifier's cross-validated scores
 and bags are drawn from a real dataset under a protocol.
+
+**Measure-ablation experiment**:
+The sweep run once per distance measure, on a grid smaller than the synthetic
+experiment's, asking which measure a meta-quantifier's mixture search should
+minimise. Its own table (ADR-0012), because the measure it varies is fixed for
+every other experiment.

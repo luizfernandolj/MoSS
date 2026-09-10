@@ -26,7 +26,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from mlquantify.counting import CC, MS, MS2, T50, TAC, TMAX, TX
+from mlquantify.counting import CC, MS, MS2, T50, TAC, TMAX, TX, ThresholdAdjustment
 from mlquantify.matching import DyS, HDy, SMM, SORD
 from mlquantify.utils import get_prev_from_labels
 
@@ -112,16 +112,26 @@ class MetaEstimator(Estimator):
     one. This is the draw ADR-0004 was written about — an unseeded one here is
     what let ADR-0001's defect pass for noise — so leaving it out has to be a
     thing someone wrote down, not a thing they forgot.
+
+    ``measure`` defaults to ``None``, not to the library's own default, and is
+    forwarded only when it is set (:func:`_quadapt_kwargs`). Writing ``"topsoe"``
+    here would freeze a copy of upstream's choice that nothing compares against
+    the original — the trap ADR-0007 caught the last time this project held one
+    (ADR-0012).
     """
 
     quantifier: type
     method_simulator: ScoreSimulator
     reference: ReferenceScoreSet
     random_state: Optional[int]
+    measure: Optional[str] = None
 
     def estimate(self, bag_scores):
         meta = QuaDaptWithSimulator(
-            self.quantifier(), self.method_simulator, self.random_state
+            self.quantifier(),
+            self.method_simulator,
+            self.random_state,
+            **_quadapt_kwargs(self.measure),
         )
         return _positive_share(meta.aggregate(bag_scores, self.reference.labels))
 
@@ -135,20 +145,36 @@ class CandidateEstimator(Estimator):
     but this one has them as a candidate beside the simulated ones, so "no
     simulated substitute matched this bag better than the real scores" is an
     answer it can give and the results can carry (ADR-0010).
+
+    ``measure`` is forwarded the same way :class:`MetaEstimator` forwards it —
+    see there for why ``None`` is not the library's default spelled out here.
     """
 
     quantifier: type
     method_simulators: Tuple[ScoreSimulator, ...]
     reference: ReferenceScoreSet
     random_state: Optional[int]
+    measure: Optional[str] = None
 
     def estimate(self, bag_scores):
         meta = QuaDaptOverCandidates(
-            self.quantifier(), self.method_simulators, self.random_state
+            self.quantifier(),
+            self.method_simulators,
+            self.random_state,
+            **_quadapt_kwargs(self.measure),
         )
         return _positive_share(
             meta.aggregate(bag_scores, self.reference.scores, self.reference.labels)
         )
+
+
+def _quadapt_kwargs(measure):
+    """The keyword arguments a meta-quantifier adapter forwards for ``measure``.
+
+    Empty when ``measure`` is ``None``, so the meta-quantifier falls through to
+    upstream's own default instead of this project restating it.
+    """
+    return {} if measure is None else {"measure": measure}
 
 
 def _positive_share(prevalences):
@@ -274,6 +300,13 @@ class SweepSpec:
     #: default anything published should keep.
     seed: Optional[int] = None
 
+    #: The distance measure every meta-quantifier arm in this sweep minimises,
+    #: fixed for the whole grid — comparing measures against each other is the
+    #: ablation's job (:func:`run_measure_ablation`), not a dimension of this
+    #: one. ``None`` leaves upstream's own default in place rather than this
+    #: project restating it (:func:`_quadapt_kwargs`, ADR-0012).
+    measure: Optional[str] = None
+
     def __post_init__(self):
         runs.reject_unknown(
             "base quantifier", self.base_quantifiers, runs.BASE_QUANTIFIERS
@@ -282,6 +315,8 @@ class SweepSpec:
         runs.reject_unknown(
             "method simulator", self.method_simulators, runs.METHOD_SIMULATORS
         )
+        if self.measure is not None:
+            runs.reject_unknown("measure", (self.measure,), runs.MEASURES)
         for cell in self.cells:
             runs.reject_unknown(
                 "cell simulator",
@@ -397,10 +432,15 @@ def estimator_for(spec, base_quantifier, method_simulator, reference, candidate_
             spec.method_simulators[method_simulator],
             reference,
             candidate_seed,
+            spec.measure,
         )
 
     return MetaEstimator(
-        quantifier, spec.method_simulators[method_simulator], reference, candidate_seed
+        quantifier,
+        spec.method_simulators[method_simulator],
+        reference,
+        candidate_seed,
+        spec.measure,
     )
 
 
@@ -612,12 +652,20 @@ SYNTHETIC_SWEEP = SweepSpec(
     base_quantifiers=BASE_QUANTIFIERS,
     reference_size=2000,
     bag_size=100,
-    repetitions=3,
+    #: Ten, not three (#9): the re-run this spec exists to produce is the one
+    #: whose output gets validated and published, and three repetitions is the
+    #: number ADR-0001 voided every run drawn under.
+    repetitions=10,
     #: The published sweep is seeded, so that the runs behind a figure can be
     #: reproduced from the spec that made them rather than only from the file
     #: they were written to. Any value would do; this one is the date the
     #: seeding landed.
     seed=20260910,
+    #: Fixed at the library's own default (``measure=None`` forwards nothing,
+    #: see :func:`_quadapt_kwargs`) for the whole grid. Whether another measure
+    #: estimates better is :data:`MEASURE_ABLATION_SWEEP`'s question, asked on
+    #: a grid this one does not have to share (ADR-0012).
+    measure=None,
 )
 
 #: The same sweep, small enough to run in seconds. Every method and every base
@@ -635,9 +683,267 @@ SMOKE_SWEEP = SweepSpec(
 )
 
 
-if __name__ == "__main__":
-    print(
-        runs.save(
-            run_sweep(SYNTHETIC_SWEEP, n_jobs=-1, progress=True), runs.SYNTHETIC
+def run_measure_ablation(spec, measures=runs.MEASURES, n_jobs=1, progress=False):
+    """Run ``spec`` once per measure and stack the runs into one frame.
+
+    ``spec`` is a template: its own ``measure`` is overridden by each entry of
+    ``measures`` in turn (:func:`dataclasses.replace`), so everything about the
+    sweep but the measure is held fixed and a difference between the frames it
+    produces is a difference the measure made. A caller passes a full-size
+    spec for the published ablation and a small one in a test, the same
+    relationship :func:`run_sweep` has to :data:`SYNTHETIC_SWEEP` and
+    :data:`SMOKE_SWEEP`.
+
+    Each measure's runs go through :func:`run_sweep` unchanged, so a method
+    simulator broken under one measure is still reported as a missing run
+    (:func:`_warn_about_missing_runs`) rather than as an exception. ``measure``
+    is stamped on afterwards — the sweep that produces each frame never varies
+    it internally, so there is nothing for ``run_cell`` to record row by row.
+    """
+    ablated = []
+    for measure in measures:
+        produced = run_sweep(
+            dataclasses.replace(spec, measure=measure), n_jobs=n_jobs, progress=progress
         )
+        produced = produced.copy()
+        produced.insert(len(runs.ESTIMATOR_COLUMNS), "measure", measure)
+        ablated.append(produced)
+
+    columns = list(runs.columns_for(runs.MEASURE_ABLATION))
+    if not ablated:
+        return pd.DataFrame(columns=columns)
+    return pd.concat(ablated, ignore_index=True)[columns]
+
+
+#: The distance-measure ablation's grid (#9): every simulator once at three
+#: merging factors and three prevalences, rather than the published grid's
+#: nineteen and seven — reduced because this grid is about to run once per
+#: entry in ``runs.MEASURES`` instead of once.
+MEASURE_ABLATION_GRID = grid(tuple(DATA_SIMULATORS), (0.1, 0.5, 0.9), (0.2, 0.5, 0.8))
+
+#: The published ablation's spec (#9): every arm and base quantifier that
+#: reads ``measure`` (:func:`estimator_for`), on the reduced grid above.
+#:
+#: Excludes the no-method-simulator arm and the baseline quantifier: ``CC``
+#: classifies and counts, and ``ReferenceEstimator`` matches the bag against
+#: the real reference directly — neither consults a meta-quantifier, so
+#: running either once per measure would only repeat the same rows under
+#: every one of them, and the baseline would then have nowhere to run
+#: (``_reject_a_baseline_with_nowhere_to_go``).
+MEASURE_ABLATION_SWEEP = SweepSpec(
+    cells=MEASURE_ABLATION_GRID,
+    data_simulators=DATA_SIMULATORS,
+    method_simulators={
+        name: simulator
+        for name, simulator in METHOD_SIMULATORS.items()
+        if name != runs.NO_METHOD_SIMULATOR
+    },
+    base_quantifiers={
+        name: quantifier
+        for name, quantifier in BASE_QUANTIFIERS.items()
+        if name != runs.BASELINE_QUANTIFIER
+    },
+    #: Smaller than the published grid's 2000: the ablation asks which measure
+    #: wins, not how well any of them does in absolute terms, and that
+    #: comparison holds at the smoke sweep's own reference size.
+    reference_size=400,
+    bag_size=100,
+    repetitions=3,
+    seed=20260910,
+)
+
+
+# --- Validating a produced sweep --------------------------------------------
+#
+# The two defect signatures ADR-0001 records: a caught exception whose row
+# carried the *previous* method's estimate instead of its own, and a
+# meta-quantifier that never consulted the base quantifier it wrapped, so
+# every one of them computed the same thing. Both are now structurally absent
+# from this seam's own code (``_estimate_or_missing`` never carries a stale
+# value; the base quantifier is what produces every meta-quantifier estimate).
+# What is checked here is the *output* of a produced sweep against both
+# signatures anyway (#9) — before anything is plotted or written up, because a
+# regression that reintroduced either defect should be caught there and not in
+# a figure.
+
+
+class DefectSignatureError(AssertionError):
+    """A produced sweep matches one of ADR-0001's two recorded defects."""
+
+
+#: Base quantifiers sharing threshold-selection machinery over the same
+#: candidate set of ROC thresholds (``mlquantify.counting.ThresholdAdjustment``
+#: — TAC, TX, T50, TMAX, MS and MS2 here). Two of them can legitimately land on
+#: the same corrected estimate: MS2 falls back to MS's own threshold set
+#: whenever no threshold clears its reliability filter (the "No cases satisfy
+#: |TPR - FPR| > 0.25" warning), and on a small reference or bag the sparse set
+#: of distinct thresholds is exactly where TAC's fixed point and TX's crossing
+#: point coincide too. Observed on the smoke sweep: TMS/TMS2 and TAC/TX tie
+#: three times in 51 rows, none of it the stale-estimate defect. A tie between
+#: two of these is therefore a genuine tie, the same as one at 0.0 or 1.0.
+THRESHOLD_POLICY_QUANTIFIERS = frozenset(
+    name for name, quantifier in BASE_QUANTIFIERS.items()
+    if issubclass(quantifier, ThresholdAdjustment)
+)
+
+
+#: How much the base quantifiers in one (method simulator, cell, repetition)
+#: group must spread, in absolute prevalence, to count as real rather than as
+#: the 0.2.0 collapse. Same order of magnitude as the smallest spread measured
+#: on the smoke sweep under the fix (``tests/test_meta_quantifier.MIN_SPREAD``);
+#: kept as its own constant because the two guard different seams.
+MIN_BASE_QUANTIFIER_SPREAD = 0.01
+
+
+def _group_columns(produced):
+    """Columns identifying one (method simulator, cell, repetition) group.
+
+    Everything but ``base_quantifier`` and ``estimated_prevalence`` — the two
+    columns that vary *within* a group — rather than a list spelled by name, so
+    both checks below read a measure-ablation frame's extra ``measure`` column
+    the same way they read the published grid's.
+    """
+    return [
+        column
+        for column in produced.columns
+        if column not in ("base_quantifier", "estimated_prevalence")
+    ]
+
+
+def stale_estimate_rows(produced):
+    """Runs whose estimate exactly repeats the row stored immediately before
+    them, within the same (method simulator, cell, repetition) group.
+
+    ADR-0001's second defect exactly: a caught exception fell through to a row
+    that then carried the *previous* method's number, one base quantifier
+    after another inside a single cell and repetition (:func:`run_cell`'s own
+    loop order). Scoped to the group for that reason: two rows either side of
+    a group boundary describe different bags and different methods entirely,
+    so a coincidence there would say nothing about this defect and comparing
+    across it would only look for one.
+
+    Within a group, two independent quantifiers landing on the same float by
+    chance is vanishingly unlikely, except in two places genuine agreement is
+    expected instead: where the bag leaves nothing to disagree about, every
+    method answers exactly 0.0 or 1.0; and where both methods are
+    :data:`THRESHOLD_POLICY_QUANTIFIERS`, sharing a threshold-selection policy
+    over the same candidate thresholds is enough on its own to coincide (see
+    there). Both are excluded as genuine ties, not the defect. Two runs that
+    both have no estimate are excluded too — that is two independent missing
+    runs, not one estimate inherited by the other.
+    """
+    ordered = produced.reset_index(drop=True)
+    estimate = ordered["estimated_prevalence"]
+    base_quantifier = ordered["base_quantifier"]
+    by_group = ordered.groupby(_group_columns(ordered), dropna=False, sort=False)
+
+    previous_estimate = by_group["estimated_prevalence"].shift()
+    previous_base_quantifier = by_group["base_quantifier"].shift()
+
+    # ``.notna()`` rather than relying on ``NaN != NaN``: a column of missing
+    # estimates alone is ``object``-typed and holds Python ``None``, for which
+    # ``eq`` disagrees with float ``NaN`` and would call two missing runs tied.
+    tied = estimate.eq(previous_estimate) & estimate.notna()
+    boundary_tie = tied & estimate.isin((0.0, 1.0))
+    threshold_policy_tie = (
+        tied
+        & base_quantifier.isin(THRESHOLD_POLICY_QUANTIFIERS)
+        & previous_base_quantifier.isin(THRESHOLD_POLICY_QUANTIFIERS)
     )
+
+    return ordered[tied & ~boundary_tie & ~threshold_policy_tie]
+
+
+def collapsed_method_simulator_groups(produced):
+    """(method simulator, cell, repetition) groups with no real spread.
+
+    ADR-0001's first defect exactly: the meta-quantifier returned its own
+    mixture search's prevalence and never consulted the base quantifier it
+    wrapped, so every base quantifier in a group computed the same thing. Under
+    the fix, a group's rows differ in nothing but the base quantifier — same
+    bag, same candidate score sets, because the seed is derived from the cell
+    and the repetition and not from the quantifier (ADR-0011) — so a spread at
+    or below :data:`MIN_BASE_QUANTIFIER_SPREAD` is the collapse, not noise.
+
+    A group of one base quantifier is not evidence of anything: nothing else
+    ran there to disagree with it, so its "spread" of zero is excluded rather
+    than read as a collapse.
+    """
+    meta = produced[produced["method_simulator"] != runs.NO_METHOD_SIMULATOR]
+    by_group = meta.groupby(_group_columns(meta), dropna=False)["estimated_prevalence"]
+    spread = by_group.agg(lambda group: group.max() - group.min())
+    return spread[(by_group.size() > 1) & (spread <= MIN_BASE_QUANTIFIER_SPREAD)]
+
+
+def validate(produced):
+    """Check a produced sweep against both of ADR-0001's defect signatures.
+
+    Raises :class:`DefectSignatureError` naming which signature and how many
+    rows or groups matched it, rather than returning a boolean: a caller with
+    nothing to do about a defect but stop is better served by an exception it
+    does not have to remember to check for.
+    """
+    stale = stale_estimate_rows(produced)
+    if not stale.empty:
+        raise DefectSignatureError(
+            f"{len(stale)} run(s) exactly repeat the estimate of the run stored "
+            "immediately before them, outside a genuine tie at 0.0 or 1.0 — "
+            "ADR-0001's stale-estimate defect signature"
+        )
+
+    collapsed = collapsed_method_simulator_groups(produced)
+    if not collapsed.empty:
+        raise DefectSignatureError(
+            f"{len(collapsed)} (method simulator, cell, repetition) group(s) "
+            f"show no more than {MIN_BASE_QUANTIFIER_SPREAD} spread across "
+            "their base quantifiers — ADR-0001's collapsed-estimate defect "
+            "signature"
+        )
+
+
+def validate_and_save(produced, kind, root=runs.ROOT):
+    """Validate, report missing runs, then save — the sequence #9 asks for.
+
+    In this order and no other: a produced sweep is checked against both of
+    ADR-0001's defect signatures *before* anything downstream — a plot, a
+    saved file — can trust it, and how many of its runs came back with no
+    estimate is printed independent of whether warnings are enabled. Both
+    branches of :func:`_main` go through here rather than repeating the
+    sequence once each, which is what let it drift out of step.
+    """
+    validate(produced)
+
+    missing = int(produced["estimated_prevalence"].isna().sum())
+    print(f"{missing} of {len(produced)} runs have no estimate")
+
+    return runs.save(produced, kind, root=root)
+
+
+def _main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--ablation",
+        action="store_true",
+        help=(
+            "run the distance-measure ablation on its reduced grid instead of "
+            "the published sweep"
+        ),
+    )
+    args = parser.parse_args()
+
+    if args.ablation:
+        produced = run_measure_ablation(
+            MEASURE_ABLATION_SWEEP, n_jobs=-1, progress=True
+        )
+        kind = runs.MEASURE_ABLATION
+    else:
+        produced = run_sweep(SYNTHETIC_SWEEP, n_jobs=-1, progress=True)
+        kind = runs.SYNTHETIC
+
+    print(validate_and_save(produced, kind))
+
+
+if __name__ == "__main__":
+    _main()

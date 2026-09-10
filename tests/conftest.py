@@ -79,3 +79,28 @@ def real_data_runs():
             }
         )
     return pd.DataFrame(rows, columns=list(runs.columns_for(runs.REAL_DATA)))
+
+
+@pytest.fixture
+def measure_ablation_runs():
+    """One run per (base quantifier, method simulator, measure)."""
+    rows = []
+    for i, (base, method, measure) in enumerate(
+        itertools.product(runs.BASE_QUANTIFIERS, runs.METHOD_SIMULATORS, runs.MEASURES)
+    ):
+        rows.append(
+            {
+                "base_quantifier": base,
+                "method_simulator": method,
+                "measure": measure,
+                "reference_simulator": runs.UNIFORM,
+                "reference_merging_factor": 0.5,
+                "bag_simulator": runs.UNIFORM,
+                "bag_merging_factor": 0.5,
+                "target_prevalence": 0.4,
+                "true_prevalence": 0.42,
+                "estimated_prevalence": 0.42 + 0.001 * i,
+                "repetition": 1,
+            }
+        )
+    return pd.DataFrame(rows, columns=list(runs.columns_for(runs.MEASURE_ABLATION)))
