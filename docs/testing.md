@@ -4,10 +4,11 @@
 .venv/bin/python -m pytest
 ```
 
-That is the whole suite. It runs in about thirty-five seconds and needs no data
-beyond what is committed. Most of that is the smoke sweep, which several tests
-run: it doubled in cost when the arm that searches every candidate rejoined it
-(ADR-0010), and the determinism tests below run it twice more on purpose.
+That is the whole suite. It runs in about a minute and a half and needs no
+data beyond what is committed — no download, no trained classifier. Most of
+that is the two smoke grids, which several tests run: they doubled in cost
+when the arm that searches every candidate rejoined the synthetic one
+(ADR-0010), and the determinism tests below run each twice more on purpose.
 
 ## What is in it
 
@@ -47,6 +48,25 @@ it reruns a spec once per measure holding everything else fixed, stamps each
 run with the measure that produced it, and reuses `run_sweep`'s own
 missing-run reporting rather than a copy of it.
 
+**Real data** (`tests/test_real_data.py`, ADR-0005, #10). Built entirely on
+fabricated pools (`tests/score_sets.scored`, the same builder the synthetic
+suite uses) rather than a downloaded dataset — the classifier and the network
+fetch are the one seam this module owns that the rest doesn't need to touch to
+be tested. `real_data.run_cell` and `real_data.run_sweep` reuse `sweep.py`'s
+estimator adapters, `estimator_for` and `seed_for` unchanged, so what this file
+tests is the part that differs: a bag drawn without replacement from a fixed
+pool, and a cell whose prevalence the pool cannot supply recording every
+method's run as missing rather than being skipped. That shortfall is asserted
+on Haberman's own shape — 306 instances, 81 of them the minority class — at
+exactly the grid boundary it produces: satisfiable through 80% positive,
+missing from 85% on (`test_the_published_grid_s_high_prevalences_are_missing_
+for_haberman`). `real_data.build_pool` is tested once on a small fabricated
+mixed-dtype frame, to cover the classifier and the categorical encoding
+without a download: that the out-of-fold scores are shaped and normalised
+correctly, that the higher-sorted label becomes the positive class (the same
+rule `sweep.observed_prevalence` reads a bag's prevalence by), and that a
+pool larger than the cap is subsampled and one within it is not.
+
 **Validating a produced sweep** (`tests/test_sweep.py`, ADR-0012). `sweep.
 validate` is what #9 asked the re-run's own output to be checked against
 before anything is plotted: a run tying the estimate stored immediately before
@@ -57,7 +77,18 @@ quantifiers under one meta-quantifier arm with no real spread between them
 (the first). Both are tested against fabricated defects and against
 `SMOKE_SWEEP`'s real output, which is where the genuine ties this check has to
 tolerate were found in the first place — see ADR-0012 for what they are and
-why they are not the defect.
+why they are not the defect. A third genuine tie joined the first two while
+building the real-data pipeline (#10): HDy and SORD, two distance-matching
+quantifiers whose discretised searches can land on the same grid point
+independently on a small or sparse score set — a real classifier's, not a
+continuous simulator's. `validate` is now `validate_no_stale_estimates` and
+`validate_no_collapsed_groups` in sequence, split out so `real_data.py`'s
+`_main` can call the first alone: the second's spread threshold is calibrated
+against the synthetic sweep and, measured against the published Haberman run,
+false-positives on real weakly-separable classifier output at a rate (2.9% of
+groups, 0% of the arm that searches every candidate) nothing like the
+systemic collapse it exists to catch. Recalibrating it for both regimes is
+tracked separately rather than solved here.
 
 `sweep.validate_and_save` is the validate-then-report-then-save sequence
 `_main` needs on both its branches, tested directly rather than through

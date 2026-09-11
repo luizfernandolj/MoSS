@@ -187,7 +187,7 @@ def _positive_share(prevalences):
     return prevalences[1]
 
 
-def _observed_prevalence(labels):
+def observed_prevalence(labels):
     """The prevalence of the bag that was actually drawn.
 
     Not the same as the cell's target prevalence once a bag cannot be filled at
@@ -248,6 +248,29 @@ def grid(simulators, merging_factors, target_prevalences):
 
 
 # --- The spec --------------------------------------------------------------
+
+
+def reject_baseline_without_a_home(base_quantifiers, method_simulators):
+    """The baseline quantifier needs the no-method-simulator arm to run in.
+
+    It reads no reference score set, so :func:`estimator_for` gives it no
+    estimator under any other arm — and a spec that registers it without that
+    arm would drop it from every cell in silence, which is the same quiet
+    mislabelling the rest of this seam exists to end.
+
+    Shared between :class:`SweepSpec` and ``real_data.RealDataSpec``, whose
+    grids differ but whose baseline arm is the same rule.
+    """
+    if (
+        runs.BASELINE_QUANTIFIER in base_quantifiers
+        and runs.NO_METHOD_SIMULATOR not in method_simulators
+    ):
+        raise ValueError(
+            f"the baseline quantifier {runs.BASELINE_QUANTIFIER!r} reads no "
+            f"reference score set, so it only runs under the "
+            f"{runs.NO_METHOD_SIMULATOR!r} method simulator, which this spec "
+            "does not include"
+        )
 
 
 @dataclass(frozen=True)
@@ -323,26 +346,7 @@ class SweepSpec:
                 (cell.reference_simulator, cell.bag_simulator),
                 tuple(self.data_simulators),
             )
-        self._reject_a_baseline_with_nowhere_to_go()
-
-    def _reject_a_baseline_with_nowhere_to_go(self):
-        """The baseline quantifier needs the no-method-simulator arm to run in.
-
-        It reads no reference score set, so :func:`estimator_for` gives it no
-        estimator under any other arm — and a spec that registers it without
-        that arm would drop it from every cell in silence, which is the same
-        quiet mislabelling the rest of this seam exists to end.
-        """
-        if (
-            runs.BASELINE_QUANTIFIER in self.base_quantifiers
-            and runs.NO_METHOD_SIMULATOR not in self.method_simulators
-        ):
-            raise ValueError(
-                f"the baseline quantifier {runs.BASELINE_QUANTIFIER!r} reads no "
-                f"reference score set, so it only runs under the "
-                f"{runs.NO_METHOD_SIMULATOR!r} method simulator, which this spec "
-                "does not include"
-            )
+        reject_baseline_without_a_home(self.base_quantifiers, self.method_simulators)
 
 
 # --- Seeding ---------------------------------------------------------------
@@ -468,7 +472,7 @@ def run_cell(cell, spec):
             merging_factor=cell.bag_merging_factor,
             random_state=seed_for(spec, cell, repetition, BAG_DRAW),
         )
-        true_prevalence = _observed_prevalence(bag_labels)
+        true_prevalence = observed_prevalence(bag_labels)
         candidate_seed = seed_for(spec, cell, repetition, CANDIDATE_DRAW)
 
         for method_simulator in spec.method_simulators:
@@ -489,7 +493,7 @@ def run_cell(cell, spec):
                         "bag_merging_factor": cell.bag_merging_factor,
                         "target_prevalence": cell.target_prevalence,
                         "true_prevalence": true_prevalence,
-                        "estimated_prevalence": _estimate_or_missing(
+                        "estimated_prevalence": estimate_or_missing(
                             estimator, bag_scores
                         ),
                         "repetition": repetition,
@@ -499,7 +503,7 @@ def run_cell(cell, spec):
     return _frame(rows)
 
 
-def _estimate_or_missing(estimator, bag_scores):
+def estimate_or_missing(estimator, bag_scores):
     """The estimate, or ``None`` if this method could not produce one.
 
     A failure is recorded rather than raised, because a sweep that stops at the
@@ -510,7 +514,7 @@ def _estimate_or_missing(estimator, bag_scores):
     previous method's estimate under this method's name.
 
     Reporting the failure is :func:`run_sweep`'s job, not this one's — see
-    :func:`_warn_about_missing_runs` for why it cannot happen here.
+    :func:`warn_about_missing_runs` for why it cannot happen here.
     """
     try:
         return estimator.estimate(bag_scores)
@@ -540,11 +544,11 @@ def run_sweep(spec, n_jobs=1, progress=False):
 
     frames = list(frames)
     produced = pd.concat(frames, ignore_index=True) if frames else _frame([])
-    _warn_about_missing_runs(produced)
+    warn_about_missing_runs(produced)
     return produced
 
 
-def _warn_about_missing_runs(produced):
+def warn_about_missing_runs(produced):
     """Say, once per method, how many of its runs came back without an estimate.
 
     Raised here rather than where the failure happens, for two reasons that
@@ -696,7 +700,7 @@ def run_measure_ablation(spec, measures=runs.MEASURES, n_jobs=1, progress=False)
 
     Each measure's runs go through :func:`run_sweep` unchanged, so a method
     simulator broken under one measure is still reported as a missing run
-    (:func:`_warn_about_missing_runs`) rather than as an exception. ``measure``
+    (:func:`warn_about_missing_runs`) rather than as an exception. ``measure``
     is stamped on afterwards — the sweep that produces each frame never varies
     it internally, so there is nothing for ``run_cell`` to record row by row.
     """
@@ -759,7 +763,7 @@ MEASURE_ABLATION_SWEEP = SweepSpec(
 # carried the *previous* method's estimate instead of its own, and a
 # meta-quantifier that never consulted the base quantifier it wrapped, so
 # every one of them computed the same thing. Both are now structurally absent
-# from this seam's own code (``_estimate_or_missing`` never carries a stale
+# from this seam's own code (``estimate_or_missing`` never carries a stale
 # value; the base quantifier is what produces every meta-quantifier estimate).
 # What is checked here is the *output* of a produced sweep against both
 # signatures anyway (#9) — before anything is plotted or written up, because a
@@ -785,6 +789,22 @@ THRESHOLD_POLICY_QUANTIFIERS = frozenset(
     name for name, quantifier in BASE_QUANTIFIERS.items()
     if issubclass(quantifier, ThresholdAdjustment)
 )
+
+
+#: HDy and SORD: two distance-matching quantifiers (``mlquantify.matching``)
+#: that each minimise their own measure over the same underlying score space
+#: by a discretised search (SORD grids alpha over 101 points; HDy's histogram
+#: search converges to a comparably coarse resolution). On a small or sparse
+#: score set — a real classifier's out-of-fold probabilities, not a
+#: continuous simulator's draw — the achievable mixtures are coarse enough
+#: that two different distances land on the same grid point independently.
+#: Observed on the published real-data run over Haberman (ADR-0005, #10):
+#: HDy/SORD tie twelve times in about 1,500 rows, and in every one of those
+#: groups DyS — which the loop visits *before* HDy — already holds a
+#: different value, which is what rules out the stale-estimate defect rather
+#: than merely failing to catch it: the defect carries the row immediately
+#: before it, and DyS's row is the one immediately before HDy's.
+MATCHING_DISTANCE_TIE_QUANTIFIERS = frozenset({"HDy", "SORD"})
 
 
 #: How much the base quantifiers in one (method simulator, cell, repetition)
@@ -823,14 +843,16 @@ def stale_estimate_rows(produced):
     across it would only look for one.
 
     Within a group, two independent quantifiers landing on the same float by
-    chance is vanishingly unlikely, except in two places genuine agreement is
-    expected instead: where the bag leaves nothing to disagree about, every
-    method answers exactly 0.0 or 1.0; and where both methods are
+    chance is vanishingly unlikely, except in three places genuine agreement
+    is expected instead: where the bag leaves nothing to disagree about, every
+    method answers exactly 0.0 or 1.0; where both methods are
     :data:`THRESHOLD_POLICY_QUANTIFIERS`, sharing a threshold-selection policy
-    over the same candidate thresholds is enough on its own to coincide (see
-    there). Both are excluded as genuine ties, not the defect. Two runs that
-    both have no estimate are excluded too — that is two independent missing
-    runs, not one estimate inherited by the other.
+    over the same candidate thresholds is enough on its own to coincide; and
+    where both are :data:`MATCHING_DISTANCE_TIE_QUANTIFIERS`, whose two
+    distances can land on the same grid point over a small or sparse score set
+    (see there). All three are excluded as genuine ties, not the defect. Two
+    runs that both have no estimate are excluded too — that is two independent
+    missing runs, not one estimate inherited by the other.
     """
     ordered = produced.reset_index(drop=True)
     estimate = ordered["estimated_prevalence"]
@@ -840,18 +862,24 @@ def stale_estimate_rows(produced):
     previous_estimate = by_group["estimated_prevalence"].shift()
     previous_base_quantifier = by_group["base_quantifier"].shift()
 
+    def _family_tie(family):
+        return (
+            tied
+            & base_quantifier.isin(family)
+            & previous_base_quantifier.isin(family)
+        )
+
     # ``.notna()`` rather than relying on ``NaN != NaN``: a column of missing
     # estimates alone is ``object``-typed and holds Python ``None``, for which
     # ``eq`` disagrees with float ``NaN`` and would call two missing runs tied.
     tied = estimate.eq(previous_estimate) & estimate.notna()
     boundary_tie = tied & estimate.isin((0.0, 1.0))
-    threshold_policy_tie = (
-        tied
-        & base_quantifier.isin(THRESHOLD_POLICY_QUANTIFIERS)
-        & previous_base_quantifier.isin(THRESHOLD_POLICY_QUANTIFIERS)
-    )
+    threshold_policy_tie = _family_tie(THRESHOLD_POLICY_QUANTIFIERS)
+    matching_distance_tie = _family_tie(MATCHING_DISTANCE_TIE_QUANTIFIERS)
 
-    return ordered[tied & ~boundary_tie & ~threshold_policy_tie]
+    return ordered[
+        tied & ~boundary_tie & ~threshold_policy_tie & ~matching_distance_tie
+    ]
 
 
 def collapsed_method_simulator_groups(produced):
@@ -875,13 +903,15 @@ def collapsed_method_simulator_groups(produced):
     return spread[(by_group.size() > 1) & (spread <= MIN_BASE_QUANTIFIER_SPREAD)]
 
 
-def validate(produced):
-    """Check a produced sweep against both of ADR-0001's defect signatures.
+def validate_no_stale_estimates(produced):
+    """Raise if any run in ``produced`` matches ADR-0001's stale-estimate
+    defect signature (:func:`stale_estimate_rows`).
 
-    Raises :class:`DefectSignatureError` naming which signature and how many
-    rows or groups matched it, rather than returning a boolean: a caller with
-    nothing to do about a defect but stop is better served by an exception it
-    does not have to remember to check for.
+    Split out from :func:`validate` so a caller can apply this half on its
+    own — ``real_data.py``'s does, because :func:`validate_no_collapsed_
+    groups` below is calibrated against the synthetic sweep's continuous
+    simulators and false-positives on a real classifier's weakly-separable
+    output (#10), while this half holds unchanged on that same run.
     """
     stale = stale_estimate_rows(produced)
     if not stale.empty:
@@ -891,6 +921,11 @@ def validate(produced):
             "ADR-0001's stale-estimate defect signature"
         )
 
+
+def validate_no_collapsed_groups(produced):
+    """Raise if any group in ``produced`` matches ADR-0001's collapsed-
+    estimate defect signature (:func:`collapsed_method_simulator_groups`).
+    """
     collapsed = collapsed_method_simulator_groups(produced)
     if not collapsed.empty:
         raise DefectSignatureError(
@@ -899,6 +934,18 @@ def validate(produced):
             "their base quantifiers — ADR-0001's collapsed-estimate defect "
             "signature"
         )
+
+
+def validate(produced):
+    """Check a produced sweep against both of ADR-0001's defect signatures.
+
+    Raises :class:`DefectSignatureError` naming which signature and how many
+    rows or groups matched it, rather than returning a boolean: a caller with
+    nothing to do about a defect but stop is better served by an exception it
+    does not have to remember to check for.
+    """
+    validate_no_stale_estimates(produced)
+    validate_no_collapsed_groups(produced)
 
 
 def validate_and_save(produced, kind, root=runs.ROOT):

@@ -892,6 +892,21 @@ def test_a_tie_between_two_threshold_policy_quantifiers_is_a_genuine_tie():
     assert stale_estimate_rows(frame).empty
 
 
+def test_a_tie_between_hdy_and_sord_is_a_genuine_tie():
+    # Two distance-matching quantifiers, each solving its own measure over the
+    # same score space on a discretised grid — observed to coincide on the
+    # published real-data run over Haberman (ADR-0005, #10), not the
+    # stale-estimate defect there either.
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="HDy", estimated_prevalence=0.01),
+            cell_row(base_quantifier="SORD", estimated_prevalence=0.01),
+        ]
+    )
+
+    assert stale_estimate_rows(frame).empty
+
+
 def test_two_missing_runs_in_a_row_are_not_a_stale_estimate_candidate():
     frame = synthetic_frame(
         [

@@ -210,4 +210,9 @@ results/results.csv
 
 results/results_jp.csv
 
+# Generated sweep output and fetched/cached datasets (ADR-0003, ADR-0005):
+# regenerated with `.venv/bin/python -m sweep` / `-m real_data`, not committed.
+results/runs/
+results/datasets/
+
 .scratch/
