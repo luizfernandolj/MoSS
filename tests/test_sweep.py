@@ -892,6 +892,24 @@ def test_a_tie_between_two_threshold_policy_quantifiers_is_a_genuine_tie():
     assert stale_estimate_rows(frame).empty
 
 
+def test_a_tie_between_the_baseline_and_a_threshold_policy_quantifier_is_a_genuine_tie():
+    # CC applies no correction at all, which is exactly what TAC/TX/T50/TMAX/
+    # TMS/TMS2's own formula reduces to once the classifier's TPR is 1 and FPR
+    # is 0 — observed on every one of mushroom's 210 cells on the published
+    # real-data run (ADR-0005, #11), where its Random Forest reaches 100%
+    # out-of-fold accuracy. Not the stale-estimate defect: both estimates
+    # equal the bag's own true prevalence there, tracking the bag rather than
+    # repeating a frozen number.
+    frame = synthetic_frame(
+        [
+            cell_row(base_quantifier="TMS2", estimated_prevalence=0.42),
+            cell_row(base_quantifier=runs.BASELINE_QUANTIFIER, estimated_prevalence=0.42),
+        ]
+    )
+
+    assert stale_estimate_rows(frame).empty
+
+
 def test_a_tie_between_hdy_and_sord_is_a_genuine_tie():
     # Two distance-matching quantifiers, each solving its own measure over the
     # same score space on a discretised grid — observed to coincide on the

@@ -791,6 +791,25 @@ THRESHOLD_POLICY_QUANTIFIERS = frozenset(
 )
 
 
+#: :data:`THRESHOLD_POLICY_QUANTIFIERS` plus the baseline, for the one tie
+#: that is not a shared implementation quirk but a shared *formula*: CC counts
+#: predicted positives outright, which is exactly what TAC/TX/T50/TMAX/TMS/
+#: TMS2's correction reduces to once the classifier's own TPR is 1 and FPR is
+#: 0 — the no-correction case built into their own formula. A classifier that
+#: good is not hypothetical: mushroom's Random Forest reaches 100%
+#: out-of-fold accuracy on the published real-data run (ADR-0005, #11), and CC
+#: ties with TMS2 — the base quantifier immediately before it in
+#: ``BASE_QUANTIFIERS``'s own order — on every one of mushroom's 210 cells,
+#: each at the bag's own true prevalence rather than some frozen number, which
+#: is what rules out the stale-estimate defect rather than merely failing to
+#: catch it. CC is not itself a ``ThresholdAdjustment`` subclass — it applies
+#: no correction, so it is not one — which is why the family above does not
+#: already cover it.
+BASELINE_TIE_QUANTIFIERS = THRESHOLD_POLICY_QUANTIFIERS | frozenset(
+    {runs.BASELINE_QUANTIFIER}
+)
+
+
 #: HDy and SORD: two distance-matching quantifiers (``mlquantify.matching``)
 #: that each minimise their own measure over the same underlying score space
 #: by a discretised search (SORD grids alpha over 101 points; HDy's histogram
@@ -846,13 +865,15 @@ def stale_estimate_rows(produced):
     chance is vanishingly unlikely, except in three places genuine agreement
     is expected instead: where the bag leaves nothing to disagree about, every
     method answers exactly 0.0 or 1.0; where both methods are
-    :data:`THRESHOLD_POLICY_QUANTIFIERS`, sharing a threshold-selection policy
-    over the same candidate thresholds is enough on its own to coincide; and
-    where both are :data:`MATCHING_DISTANCE_TIE_QUANTIFIERS`, whose two
-    distances can land on the same grid point over a small or sparse score set
-    (see there). All three are excluded as genuine ties, not the defect. Two
-    runs that both have no estimate are excluded too — that is two independent
-    missing runs, not one estimate inherited by the other.
+    :data:`BASELINE_TIE_QUANTIFIERS`, sharing a threshold-selection policy
+    over the same candidate thresholds — or, for the baseline, sharing the
+    no-correction case that policy degenerates to on a (near-)error-free
+    classifier — is enough on its own to coincide; and where both are
+    :data:`MATCHING_DISTANCE_TIE_QUANTIFIERS`, whose two distances can land on
+    the same grid point over a small or sparse score set (see there). All
+    three are excluded as genuine ties, not the defect. Two runs that both
+    have no estimate are excluded too — that is two independent missing runs,
+    not one estimate inherited by the other.
     """
     ordered = produced.reset_index(drop=True)
     estimate = ordered["estimated_prevalence"]
@@ -874,7 +895,7 @@ def stale_estimate_rows(produced):
     # ``eq`` disagrees with float ``NaN`` and would call two missing runs tied.
     tied = estimate.eq(previous_estimate) & estimate.notna()
     boundary_tie = tied & estimate.isin((0.0, 1.0))
-    threshold_policy_tie = _family_tie(THRESHOLD_POLICY_QUANTIFIERS)
+    threshold_policy_tie = _family_tie(BASELINE_TIE_QUANTIFIERS)
     matching_distance_tie = _family_tie(MATCHING_DISTANCE_TIE_QUANTIFIERS)
 
     return ordered[

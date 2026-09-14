@@ -22,6 +22,8 @@ and :func:`draw_bag` says so with ``None`` rather than padding the shortfall
 with a repeated instance.
 """
 
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional, Sequence, Tuple, Union
@@ -247,6 +249,33 @@ def run_cell(cell, spec):
     return _frame(rows)
 
 
+def _progress(iterable, total, desc, colour=None):
+    """``iterable``, reporting progress as it is consumed.
+
+    A live-updating bar (``tqdm``, unchanged) in an interactive terminal.
+    Standard output redirected to a file — a background run's log, which is
+    how the published sweep across all eight datasets actually runs — is not
+    a terminal, and tqdm's carriage-return updates land there as a single
+    unreadable line rather than a bar. There, one plain line is printed per
+    item instead, each carrying an ETA, so the log stays readable with `tail`
+    and says how much longer the run has left.
+    """
+    if sys.stdout.isatty():
+        yield from tqdm(iterable, total=total, desc=desc, colour=colour)
+        return
+
+    start = time.monotonic()
+    for done, item in enumerate(iterable, start=1):
+        yield item
+        elapsed = time.monotonic() - start
+        eta = elapsed / done * (total - done)
+        print(
+            f"{desc}: {done}/{total} done "
+            f"({elapsed:.0f}s elapsed, ~{eta:.0f}s remaining)",
+            flush=True,
+        )
+
+
 def run_sweep(spec, n_jobs=1, progress=False):
     """Run every cell of the spec's grid and return the runs as one frame.
 
@@ -259,7 +288,7 @@ def run_sweep(spec, n_jobs=1, progress=False):
         delayed(run_cell)(cell, spec) for cell in spec.cells
     )
     if progress:
-        frames = tqdm(
+        frames = _progress(
             frames, total=len(spec.cells), desc="real-data sweep", colour="green"
         )
 
@@ -272,6 +301,24 @@ def run_sweep(spec, n_jobs=1, progress=False):
 def _frame(rows):
     """Rows as a frame in the results module's column order, even when empty."""
     return pd.DataFrame(rows, columns=list(runs.columns_for(runs.REAL_DATA)))
+
+
+def missing_by_dataset(produced):
+    """How many of ``produced``'s runs have no estimate, broken out by dataset.
+
+    ``sweep.warn_about_missing_runs`` already reports a missing count per
+    method, but a real dataset's shortfall is a property of the *dataset*
+    (ADR-0005) — a pool too small to fill a bag at some prevalence is missing
+    there for every method alike, no matter which one is asked. A reader
+    checking that a run's missing count is explained by a dataset's size
+    rather than by some method failing needs the count broken out that way,
+    which the per-method report alone cannot show.
+
+    Datasets with no missing runs are absent rather than present at zero, the
+    same convention ``warn_about_missing_runs`` follows for methods.
+    """
+    missing = produced[produced["estimated_prevalence"].isna()]
+    return missing.groupby("dataset").size()
 
 
 # --- Building a pool -----------------------------------------------------
@@ -438,7 +485,7 @@ def _main():
     names = (args.dataset,) if args.dataset else tuple(DATASET_FETCHERS)
     pools = {
         name: fetch_pool(name, random_state=20260911)
-        for name in tqdm(names, desc="datasets", colour="blue")
+        for name in _progress(names, total=len(names), desc="datasets", colour="blue")
     }
 
     produced = run_sweep(build_spec(pools, seed=20260911), n_jobs=-1, progress=True)
@@ -456,6 +503,8 @@ def _main():
 
     missing = int(produced["estimated_prevalence"].isna().sum())
     print(f"{missing} of {len(produced)} runs have no estimate")
+    for dataset, count in missing_by_dataset(produced).items():
+        print(f"  {dataset}: {count}")
     print(runs.save(produced, runs.REAL_DATA))
 
 

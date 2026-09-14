@@ -9,6 +9,7 @@ probabilities`` and its neighbours are the exception — they exercise
 """
 
 import dataclasses
+import sys
 
 import numpy as np
 import pandas as pd
@@ -281,6 +282,84 @@ def test_an_unsatisfiable_cell_records_every_method_as_missing(smoke_real_data_s
     assert produced["estimated_prevalence"].isna().all()
     assert produced["true_prevalence"].isna().all()
     assert len(produced) == len(expected) * spec.repetitions
+
+
+def test_missing_runs_are_reported_per_dataset(smoke_real_data_spec):
+    # ADR-0005: a dataset's shortfall is missing for every method alike, not
+    # for whichever one happened to fail, so the per-dataset breakdown should
+    # carry the same count `run_sweep`'s own missing total does for Haberman
+    # and say nothing at all about mushroom, which this cell can satisfy.
+    unsatisfiable = real_data.Cell(dataset="haberman_survival", target_prevalence=0.9)
+    satisfiable = real_data.Cell(dataset="mushroom", target_prevalence=0.4)
+    spec = dataclasses.replace(smoke_real_data_spec, cells=(unsatisfiable, satisfiable))
+
+    with pytest.warns(sweep.MissingRunWarning):
+        produced = real_data.run_sweep(spec)
+
+    expected_pairs = {
+        (base, method)
+        for base in spec.base_quantifiers
+        if base != runs.BASELINE_QUANTIFIER
+        for method in spec.method_simulators
+    } | {(runs.BASELINE_QUANTIFIER, runs.NO_METHOD_SIMULATOR)}
+
+    by_dataset = real_data.missing_by_dataset(produced)
+
+    assert by_dataset.to_dict() == {
+        "haberman_survival": len(expected_pairs) * spec.repetitions
+    }
+
+
+def test_a_dataset_with_no_missing_runs_is_absent_from_the_report(
+    smoke_real_data_spec,
+):
+    produced = real_data.run_sweep(smoke_real_data_spec)
+
+    assert real_data.missing_by_dataset(produced).empty
+
+
+# ---------------------------------------------------------------------------
+# Reporting progress on a long-running sweep
+# ---------------------------------------------------------------------------
+#
+# The published sweep across all eight datasets runs as a background job
+# whose stdout goes to a log file, not a terminal. tqdm's live bar updates a
+# single line with carriage returns, which is exactly what a log file cannot
+# render — read back, it is one unreadable line rather than a bar. _progress
+# is what run_sweep and _main report through instead: tqdm when stdout is a
+# terminal, one plain line per item with an ETA otherwise.
+
+
+def test_progress_yields_every_item_in_order_off_a_terminal(monkeypatch):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+
+    assert list(real_data._progress(["a", "b", "c"], total=3, desc="x")) == [
+        "a",
+        "b",
+        "c",
+    ]
+
+
+def test_progress_prints_one_line_per_item_off_a_terminal(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+
+    list(real_data._progress(["a", "b"], total=2, desc="widgets"))
+
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 2
+    assert all(line.startswith("widgets: ") for line in lines)
+    assert "1/2" in lines[0] and "2/2" in lines[1]
+    assert "elapsed" in lines[0] and "remaining" in lines[0]
+
+
+def test_progress_yields_every_item_in_order_on_a_terminal(monkeypatch):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    assert list(real_data._progress(["a", "b", "c"], total=3, desc="x")) == [
+        "a",
+        "b",
+        "c",
+    ]
 
 
 # ---------------------------------------------------------------------------

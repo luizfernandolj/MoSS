@@ -90,6 +90,16 @@ groups, 0% of the arm that searches every candidate) nothing like the
 systemic collapse it exists to catch. Recalibrating it for both regimes is
 tracked separately rather than solved here.
 
+A fourth genuine tie was found running the published real-data sweep across
+all eight datasets (#11): CC and TMS2 tie on every one of mushroom's 210
+cells, always at the bag's own true prevalence. Mushroom's Random Forest
+reaches 100% out-of-fold accuracy, which makes TAC/TX/T50/TMAX/TMS/TMS2's own
+correction formula degenerate to no correction at all (TPR 1, FPR 0) — exactly
+what CC already does by never correcting in the first place. `CC` is not a
+`ThresholdAdjustment` subclass, so `THRESHOLD_POLICY_QUANTIFIERS` alone did
+not already cover it; `BASELINE_TIE_QUANTIFIERS` adds it to that family for
+`stale_estimate_rows`'s own purposes.
+
 `sweep.validate_and_save` is the validate-then-report-then-save sequence
 `_main` needs on both its branches, tested directly rather than through
 `_main`: that a defective frame never reaches `runs.save` (no file exists
