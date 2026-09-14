@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import export_grid_matplotlib as export
+import grid
 import runs
 
 
@@ -93,3 +94,62 @@ def test_every_published_method_simulator_is_drawable():
     assert set(export.PUBLISHED_METHOD_SIMULATORS) <= set(
         export.METHOD_SIMULATOR_LINESTYLES
     )
+
+
+# ---------------------------------------------------------------------------
+# #13: the export reaches the one grid module rather than keeping its own
+# copy of which cell shows which runs.
+# ---------------------------------------------------------------------------
+
+
+def test_the_grid_shape_export_draws_is_grid_s_own_not_a_copy():
+    # Identity, not just equality: this fails if a future edit goes back to
+    # spelling out ``BAG_SIMULATORS``/``REFERENCE_MERGING_FACTORS`` in
+    # ``export_grid_matplotlib.py`` instead of importing them, even if the
+    # spelled-out values still happen to match today.
+    assert export.BAG_SIMULATORS is grid.BAG_SIMULATORS
+    assert export.REFERENCE_MERGING_FACTORS is grid.REFERENCE_MERGING_FACTORS
+
+
+def test_plot_grid_reaches_grid_panels_with_its_own_constants_and_the_runs_it_is_given(
+    monkeypatch, tmp_path, synthetic_runs
+):
+    # A test calling ``grid.panels`` directly (``tests/test_grid.py``) proves
+    # the function itself is correct; it says nothing about whether this
+    # renderer actually calls it, or calls it with the right arguments —
+    # which is the failure mode #13 exists to end. This drives
+    # ``export.plot_grid`` for real and inspects the call it makes.
+    monkeypatch.setattr(export, "OUTPUT_PNG", str(tmp_path / "grid.png"))
+    monkeypatch.setattr(export, "OUTPUT_PDF", str(tmp_path / "grid.pdf"))
+
+    real_panels = grid.panels
+    calls = []
+
+    def spying_panels(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real_panels(*args, **kwargs)
+
+    monkeypatch.setattr(grid, "panels", spying_panels)
+
+    # The same selection ``export.load_published_runs`` makes: the baseline
+    # quantifier and the ``all``/``none`` arms are not among
+    # ``PUBLISHED_BASE_QUANTIFIERS``/``PUBLISHED_METHOD_SIMULATORS``, so a
+    # published run is never the baseline, and ``plot_grid`` never has to draw
+    # one.
+    published = synthetic_runs[
+        synthetic_runs["base_quantifier"].isin(export.PUBLISHED_BASE_QUANTIFIERS)
+        & synthetic_runs["method_simulator"].isin(export.PUBLISHED_METHOD_SIMULATORS)
+    ].copy()
+    published["method"] = runs.method_labels(published)
+    published["absolute_error"] = runs.absolute_error(published)
+
+    export.plot_grid(published)
+
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == (published,)
+    assert kwargs == {
+        "reference_simulator": export.REFERENCE_SIMULATOR,
+        "bag_simulators": export.BAG_SIMULATORS,
+        "reference_merging_factors": export.REFERENCE_MERGING_FACTORS,
+    }

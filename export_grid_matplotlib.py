@@ -8,8 +8,10 @@ base quantifiers the sweep records as ``"TX"`` and ``"TMS"``.
 """
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
+import grid
 import runs
 
 #: What the published grid shows. A subset by choice, not by accident.
@@ -24,8 +26,12 @@ PUBLISHED_BASE_QUANTIFIERS = ("TAC", "TMAX", "T50", "HDy", "TX", "TMS", "DyS", "
 PUBLISHED_METHOD_SIMULATORS = runs.SIMULATORS
 
 REFERENCE_SIMULATOR = runs.UNIFORM
-REFERENCE_MERGING_FACTORS = (0.25, 0.5, 0.75)
-BAG_SIMULATORS = runs.SIMULATORS
+#: The grid's shape, shared with the dashboard rather than restated
+#: (``grid.py``, #13) — the figure and the dashboard draw the same rows and
+#: columns, and two copies of "which merging factors, which bag simulators"
+#: is exactly the drift #13 exists to end.
+REFERENCE_MERGING_FACTORS = grid.REFERENCE_MERGING_FACTORS
+BAG_SIMULATORS = grid.BAG_SIMULATORS
 
 QUANTIFIER_MARKERS = {
     "TAC": "o",
@@ -66,28 +72,8 @@ def load_published_runs():
     ].copy()
 
 
-def mean_error_per_cell(published):
-    """Mean error per method and cell of the grid."""
-    return (
-        published.groupby(
-            [
-                "reference_merging_factor",
-                "reference_simulator",
-                "bag_simulator",
-                "method_simulator",
-                "base_quantifier",
-                "method",
-                "bag_merging_factor",
-            ],
-            observed=True,
-        )["absolute_error"]
-        .mean()
-        .reset_index()
-    )
-
-
-def plot_grid(agg) -> None:
-    eps = 1e-9
+def plot_grid(published) -> None:
+    """Draw the 3x3 grid. Which runs land in which panel is ``grid.panels``' call, not this one's."""
     x_axis_label_size = 44
     y_axis_label_size = 30
     tick_label_size = 30
@@ -100,68 +86,68 @@ def plot_grid(agg) -> None:
 
     legend_handles = {}
 
-    for row_idx, bag_simulator in enumerate(BAG_SIMULATORS):
-        for col_idx, reference_merging_factor in enumerate(REFERENCE_MERGING_FACTORS):
-            ax = axes[row_idx, col_idx]
-            ax.set_facecolor("white")
+    built_panels = grid.panels(
+        published,
+        reference_simulator=REFERENCE_SIMULATOR,
+        bag_simulators=BAG_SIMULATORS,
+        reference_merging_factors=REFERENCE_MERGING_FACTORS,
+    )
 
-            cell = agg[
-                (
-                    np.abs(agg["reference_merging_factor"] - reference_merging_factor)
-                    < eps
-                )
-                & (agg["reference_simulator"] == REFERENCE_SIMULATOR)
-                & (agg["bag_simulator"] == bag_simulator)
-            ]
+    for panel_idx, panel in enumerate(built_panels):
+        row_idx, col_idx = divmod(panel_idx, len(REFERENCE_MERGING_FACTORS))
+        bag_simulator = panel.bag_simulator
+        reference_merging_factor = panel.reference_merging_factor
+        ax = axes[row_idx, col_idx]
+        ax.set_facecolor("white")
 
-            for method in sorted(cell["method"].unique()):
-                sub = cell[cell["method"] == method].sort_values("bag_merging_factor")
-                if sub.empty:
-                    continue
-                base_quantifier = str(sub["base_quantifier"].iloc[0])
-                method_simulator = str(sub["method_simulator"].iloc[0])
-                line = ax.plot(
-                    sub["bag_merging_factor"],
-                    sub["absolute_error"],
-                    marker=QUANTIFIER_MARKERS.get(base_quantifier, "o"),
-                    linewidth=2.4,
-                    markersize=5.5,
-                    color=METHOD_SIMULATOR_COLOURS[method_simulator],
-                    linestyle=METHOD_SIMULATOR_LINESTYLES[method_simulator],
-                    label=method,
-                    alpha=0.95,
-                )[0]
-                if method not in legend_handles:
-                    legend_handles[method] = line
+        panel_runs = pd.concat([panel.methods, panel.baseline], ignore_index=True)
 
-            ax.set_ylim(0.0, 0.45)
-            ax.axvline(
-                x=reference_merging_factor,
-                color="#111827",
-                linestyle="--",
-                linewidth=1.6,
-                alpha=0.8,
-            )
-            ax.grid(True, linestyle="--", alpha=0.25)
+        for method in sorted(panel_runs["method"].unique()):
+            sub = panel_runs[panel_runs["method"] == method]
+            base_quantifier = str(sub["base_quantifier"].iloc[0])
+            method_simulator = str(sub["method_simulator"].iloc[0])
+            line = ax.plot(
+                sub["bag_merging_factor"],
+                sub["absolute_error"],
+                marker=QUANTIFIER_MARKERS.get(base_quantifier, "o"),
+                linewidth=2.4,
+                markersize=5.5,
+                color=METHOD_SIMULATOR_COLOURS[method_simulator],
+                linestyle=METHOD_SIMULATOR_LINESTYLES[method_simulator],
+                label=method,
+                alpha=0.95,
+            )[0]
+            if method not in legend_handles:
+                legend_handles[method] = line
 
-            ax.set_xlabel(
-                r"$\mathbf{m}_{\mathbf{ts}}$",
-                fontsize=x_axis_label_size,
-                fontweight="bold",
-                labelpad=10,
-            )
-            if col_idx == 0:
-                ax.set_ylabel("MAE", fontsize=y_axis_label_size, fontweight="bold")
+        ax.set_ylim(0.0, 0.45)
+        ax.axvline(
+            x=reference_merging_factor,
+            color="#111827",
+            linestyle="--",
+            linewidth=1.6,
+            alpha=0.8,
+        )
+        ax.grid(True, linestyle="--", alpha=0.25)
 
-            ax.tick_params(axis="both", labelsize=tick_label_size, width=1.8, length=7)
-            ax.set_title(
-                f"{runs.SIMULATOR_LABELS[bag_simulator]} | "
-                + r"$m_{tr}$"
-                + f"={reference_merging_factor}",
-                fontsize=title_size,
-                fontweight="bold",
-                pad=10,
-            )
+        ax.set_xlabel(
+            r"$\mathbf{m}_{\mathbf{ts}}$",
+            fontsize=x_axis_label_size,
+            fontweight="bold",
+            labelpad=10,
+        )
+        if col_idx == 0:
+            ax.set_ylabel("MAE", fontsize=y_axis_label_size, fontweight="bold")
+
+        ax.tick_params(axis="both", labelsize=tick_label_size, width=1.8, length=7)
+        ax.set_title(
+            f"{runs.SIMULATOR_LABELS[bag_simulator]} | "
+            + r"$m_{tr}$"
+            + f"={reference_merging_factor}",
+            fontsize=title_size,
+            fontweight="bold",
+            pad=10,
+        )
 
     ordered_labels = sorted(legend_handles.keys())
     fig.legend(
@@ -308,7 +294,7 @@ def plot_boxplot_by_bag_simulator(published) -> None:
 
 if __name__ == "__main__":
     published_runs = load_published_runs()
-    plot_grid(mean_error_per_cell(published_runs))
+    plot_grid(published_runs)
     plot_boxplot_by_reference_merging_factor(published_runs)
     plot_boxplot_by_bag_simulator(published_runs)
     print(

@@ -129,3 +129,14 @@ The sweep run once per distance measure, on a grid smaller than the synthetic
 experiment's, asking which measure a meta-quantifier's mixture search should
 minimise. Its own table (ADR-0012), because the measure it varies is fixed for
 every other experiment.
+
+### Figures
+
+**Panel**:
+One subplot of the grid the dashboard and the published figure both draw: a
+bag simulator crossed with a reference merging factor, one line per method
+inside. Decided once, by `grid.py`, from whichever runs a renderer hands it
+(#13) — a renderer only draws the panels it is given.
+_Avoid_: cell (a *point of the experiment grid* already: `sweep.Cell` and
+`real_data.Cell` name one way of making the reference score set and the
+bags, not a subplot)

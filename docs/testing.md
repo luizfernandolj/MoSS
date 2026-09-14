@@ -151,10 +151,40 @@ quantifiers named `"X"` and `"MS"` where the sweep records `"TX"` and `"TMS"`,
 so two of the grid's eight methods were never drawn and the figure rendered
 cleanly with six lines.
 
-Both run against a small table built in `tests/conftest.py` from `runs`' own
-vocabulary — never against a full results file, which is what made the old
-readers impossible to test at all. Building it from the vocabulary is the
-point: a rename reaches the fixture too, so a filter left behind fails.
+Also (#13) that the export reaches `grid.py` for real rather than each renderer
+keeping its own copy: `export.BAG_SIMULATORS` and `export.REFERENCE_MERGING_
+FACTORS` are asserted identical *by identity* to `grid`'s (a copy that happened
+to hold equal values would still pass an equality check and still be the drift
+#13 exists to end), and `export.plot_grid` is driven for real with
+`grid.panels` swapped for a spy that records the call and delegates to the
+real one — asserting the exact runs and grid-shape arguments the renderer
+passed, not just that some call happened. `dashboard.py` cannot be driven the
+same way: it is a Streamlit script that touches disk and widgets at module
+scope, so no test imports it (see Grid, below, for where its share of this
+guarantee actually lives).
+
+Both `test_renderers.py`'s filter tests run against a small table built in
+`tests/conftest.py` from `runs`' own vocabulary — never against a full results
+file, which is what made the old readers impossible to test at all. Building
+it from the vocabulary is the point: a rename reaches the fixture too, so a
+filter left behind fails.
+
+**Grid** (`tests/test_grid.py`, #13). Which runs land in which panel of the
+grid — eps-tolerant masking on bag simulator and reference merging factor,
+splitting the baseline quantifier into its own frame and relabelling it,
+averaging repetitions into one point per method and x value, ordering rows by
+method then by merging factor, and downsampling a line that carries more than
+`grid.MAX_POINTS_PER_METHOD` points — asserted directly against
+`grid.panels`' return value, a tuple of `grid.Panel`, built from a table
+constructed in code. No renderer runs and nothing is drawn: this is the
+"testable by assertion, with no rendering required" #13 asked for. It proves
+the function itself is correct; it is `test_renderers.py`'s wiring tests above
+that prove a renderer actually calls it. Between the two, `dashboard.py` is
+the gap: nothing imports it (see Renderers, above), so its own call into
+`grid.panels` was exercised by hand (`runpy`, during review) rather than by a
+test in this suite, and that it reads `grid.BAG_SIMULATORS`/`grid.
+REFERENCE_MERGING_FACTORS` rather than a copy is a claim a reviewer checks by
+reading the file, not one any test here checks by running it.
 
 ## Determinism
 

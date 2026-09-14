@@ -1,8 +1,11 @@
 """Interactive view of the synthetic runs.
 
-Loading and labelling belong to ``runs``; this script only draws. It and
-``export_grid_matplotlib.py`` used to carry a copy each, and the copies drifted
-until the two disagreed about which methods existed.
+Loading and labelling belong to ``runs``; which runs land in which panel of
+the grid belongs to ``grid``; this script only draws. It and
+``export_grid_matplotlib.py`` used to each carry a copy of the grid-building
+logic too, and the copies drifted until the two disagreed about which
+methods existed (#5) and were free to disagree about which panel of the grid
+drew what (#13).
 """
 
 import numpy as np
@@ -12,9 +15,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
+import grid
 import runs
-
-BASELINE_LABEL = f"{runs.BASELINE_QUANTIFIER} (baseline)"
 
 st.set_page_config(layout="wide", page_title="Dashboard MoSS")
 st.title("🎯 Dashboard: MoSS e diferentes distribuições")
@@ -43,29 +45,7 @@ def load_runs():
     )
 
 
-@st.cache_data(show_spinner=True)
-def pre_aggregate(synthetic: pd.DataFrame):
-    agg = (
-        synthetic.groupby(
-            [
-                "reference_merging_factor",
-                "reference_simulator",
-                "bag_simulator",
-                "method_simulator",
-                "base_quantifier",
-                "method",
-                "bag_merging_factor",
-            ],
-            observed=True,
-        )["absolute_error"]
-        .mean()
-        .reset_index()
-    )
-    return agg.sort_values(["reference_merging_factor", "bag_merging_factor"])
-
-
 synthetic_runs = load_runs()
-runs_agg = pre_aggregate(synthetic_runs)
 
 # ============================
 # 2) Cores e legendas
@@ -167,58 +147,29 @@ unaggregated_runs = synthetic_runs[
     & (synthetic_runs["base_quantifier"].isin(selected_quantifiers))
 ].copy()
 
-mask_reference_agg = (
-    np.abs(runs_agg["reference_merging_factor"] - selected_reference_factor) < eps
+#: Which base quantifiers and method simulators appear anywhere in the grid
+#: at all — the caller's choice ``grid.panels`` asks for. Placing the runs
+#: it is given into cells is ``grid``'s choice, not this script's.
+selected_runs = synthetic_runs[
+    synthetic_runs["method_simulator"].isin(selected_method_simulators)
+    & synthetic_runs["base_quantifier"].isin(selected_quantifiers)
+]
+
+# ============================
+# 5) Painel da célula selecionada, para cores e marcadores consistentes
+# ============================
+(selected_panel,) = grid.panels(
+    selected_runs,
+    reference_simulator=selected_reference_simulator,
+    bag_simulators=(selected_bag_simulator,),
+    reference_merging_factors=(selected_reference_factor,),
 )
-filtered_runs = runs_agg[
-    mask_reference_agg
-    & (runs_agg["reference_simulator"] == selected_reference_simulator)
-    & (runs_agg["bag_simulator"] == selected_bag_simulator)
-    & (runs_agg["method_simulator"].isin(selected_method_simulators))
-    & (runs_agg["base_quantifier"].isin(selected_quantifiers))
-].copy()
+downsampled_runs = pd.concat(
+    [selected_panel.methods, selected_panel.baseline], ignore_index=True
+)
 
-
-# ============================
-# 4.1) Separar o baseline em uma linha única
-# ============================
-def split_out_baseline(frame):
-    """Return (frame without the baseline, the baseline's own runs)."""
-    baseline = frame[
-        (frame["base_quantifier"] == runs.BASELINE_QUANTIFIER)
-        & (frame["method_simulator"] == runs.NO_METHOD_SIMULATOR)
-    ].copy()
-    if not baseline.empty:
-        baseline["method"] = BASELINE_LABEL
-    return frame[frame["base_quantifier"] != runs.BASELINE_QUANTIFIER].copy(), baseline
-
-
-filtered_runs, baseline_runs = split_out_baseline(filtered_runs)
-
-# ============================
-# 5) Downsampling opcional
-# ============================
-max_points_per_method = 1000
-
-
-def downsample(frame, key_col="method", x_col="bag_merging_factor"):
-    if frame.empty:
-        return frame
-    out = []
-    for method in frame[key_col].unique():
-        sub = frame[frame[key_col] == method]
-        if len(sub) > max_points_per_method:
-            sub = sub.sort_values(x_col).iloc[
-                np.linspace(0, len(sub) - 1, max_points_per_method).astype(int)
-            ]
-        out.append(sub)
-    return pd.concat(out, ignore_index=True)
-
-
-downsampled_runs = downsample(filtered_runs)
-
-grid_reference_factors = [0.25, 0.5, 0.75]
-grid_bag_simulators = list(runs.SIMULATORS)
+grid_reference_factors = grid.REFERENCE_MERGING_FACTORS
+grid_bag_simulators = grid.BAG_SIMULATORS
 
 for required in grid_bag_simulators:
     if required not in bag_simulator_opts:
@@ -274,67 +225,63 @@ fig_grid = make_subplots(
 
 legend_methods_shown = set()
 
-for row_idx, bag_simulator in enumerate(grid_bag_simulators, start=1):
-    for col_idx, reference_factor in enumerate(grid_reference_factors, start=1):
-        cell_mask = (
-            (np.abs(runs_agg["reference_merging_factor"] - reference_factor) < eps)
-            & (runs_agg["reference_simulator"] == selected_reference_simulator)
-            & (runs_agg["bag_simulator"] == bag_simulator)
-            & (runs_agg["method_simulator"].isin(selected_method_simulators))
-            & (runs_agg["base_quantifier"].isin(selected_quantifiers))
-        )
-        cell_df, cell_baseline = split_out_baseline(runs_agg[cell_mask])
+built_panels = grid.panels(
+    selected_runs,
+    reference_simulator=selected_reference_simulator,
+    bag_simulators=grid_bag_simulators,
+    reference_merging_factors=grid_reference_factors,
+)
 
-        if not cell_df.empty:
-            cell_df = downsample(cell_df)
+for panel_idx, panel in enumerate(built_panels):
+    row_idx, col_idx = divmod(panel_idx, len(grid_reference_factors))
+    row, col = row_idx + 1, col_idx + 1
 
-            for method in sorted(cell_df["method"].unique()):
-                sub = cell_df[cell_df["method"] == method].sort_values(
-                    "bag_merging_factor"
-                )
-                show_legend = method not in legend_methods_shown
-                fig_grid.add_trace(
-                    go.Scatter(
-                        x=sub["bag_merging_factor"],
-                        y=sub["absolute_error"],
-                        mode="lines+markers",
-                        name=method,
-                        legendgroup=method,
-                        showlegend=show_legend,
-                        line=dict(color=color_discrete_map.get(method, "#111827"), width=2),
-                        marker=dict(
-                            symbol=quantifier_to_marker.get(
-                                sub["base_quantifier"].iloc[0], "circle"
-                            ),
-                            size=7,
-                        ),
-                    ),
-                    row=row_idx,
-                    col=col_idx,
-                )
-                if show_legend:
-                    legend_methods_shown.add(method)
-
-        if not cell_baseline.empty:
-            show_legend_baseline = BASELINE_LABEL not in legend_methods_shown
+    if not panel.methods.empty:
+        for method in sorted(panel.methods["method"].unique()):
+            sub = panel.methods[panel.methods["method"] == method]
+            show_legend = method not in legend_methods_shown
             fig_grid.add_trace(
                 go.Scatter(
-                    x=cell_baseline["bag_merging_factor"],
-                    y=cell_baseline["absolute_error"],
+                    x=sub["bag_merging_factor"],
+                    y=sub["absolute_error"],
                     mode="lines+markers",
-                    name=BASELINE_LABEL,
-                    legendgroup=BASELINE_LABEL,
-                    showlegend=show_legend_baseline,
-                    line=dict(color="#FF7F0E", width=4),
-                    marker=dict(size=8, symbol="circle", color="#FF7F0E"),
+                    name=method,
+                    legendgroup=method,
+                    showlegend=show_legend,
+                    line=dict(color=color_discrete_map.get(method, "#111827"), width=2),
+                    marker=dict(
+                        symbol=quantifier_to_marker.get(
+                            sub["base_quantifier"].iloc[0], "circle"
+                        ),
+                        size=7,
+                    ),
                 ),
-                row=row_idx,
-                col=col_idx,
+                row=row,
+                col=col,
             )
-            if show_legend_baseline:
-                legend_methods_shown.add(BASELINE_LABEL)
+            if show_legend:
+                legend_methods_shown.add(method)
 
-        fig_grid.update_yaxes(range=[0, 0.45], row=row_idx, col=col_idx)
+    if not panel.baseline.empty:
+        show_legend_baseline = grid.BASELINE_LABEL not in legend_methods_shown
+        fig_grid.add_trace(
+            go.Scatter(
+                x=panel.baseline["bag_merging_factor"],
+                y=panel.baseline["absolute_error"],
+                mode="lines+markers",
+                name=grid.BASELINE_LABEL,
+                legendgroup=grid.BASELINE_LABEL,
+                showlegend=show_legend_baseline,
+                line=dict(color="#FF7F0E", width=4),
+                marker=dict(size=8, symbol="circle", color="#FF7F0E"),
+            ),
+            row=row,
+            col=col,
+        )
+        if show_legend_baseline:
+            legend_methods_shown.add(grid.BASELINE_LABEL)
+
+    fig_grid.update_yaxes(range=[0, 0.45], row=row, col=col)
 
 fig_grid.update_layout(
     height=1100,
