@@ -19,6 +19,7 @@ import real_data
 import runs
 import sweep
 from tests.score_sets import scored
+from utils.simulators import MVNSimulator
 
 
 def pool(name, n, prevalence, **score_kwargs):
@@ -28,6 +29,19 @@ def pool(name, n, prevalence, **score_kwargs):
     the same reason ``tests/score_sets.py`` exists for the synthetic sweep.
     """
     scores, labels = scored(n, prevalence, **score_kwargs)
+    return real_data.Pool(dataset=name, scores=scores, labels=labels)
+
+
+def multiclass_pool(name, n, prevalence, merging_factor=0.2, random_state=0):
+    """A multiclass pool (#14), the same fabricated-scores idea as :func:`pool`.
+
+    ``tests/score_sets.scored`` is binary by construction (two classes, one
+    score each), so this reaches for :class:`~utils.simulators.MVNSimulator`
+    directly instead — already its own well-tested contract
+    (``tests/test_simulators.py``), not something this suite needs to
+    re-verify.
+    """
+    scores, labels = MVNSimulator()(n, prevalence, merging_factor, random_state=random_state)
     return real_data.Pool(dataset=name, scores=scores, labels=labels)
 
 
@@ -54,6 +68,79 @@ def test_the_published_grid_has_twenty_one_prevalences():
 def test_eight_datasets_are_registered():
     # ADR-0005: eight binary tabular datasets.
     assert len(real_data.DATASET_FETCHERS) == 8
+
+
+def test_multiclass_datasets_are_registered_separately_from_binary_ones():
+    # #14: evidence the simplex simulators generalise, not a second ADR-0005
+    # coverage claim, so a smaller registry of its own rather than folded in.
+    assert real_data.MULTICLASS_DATASET_FETCHERS
+    assert set(real_data.MULTICLASS_DATASET_FETCHERS).isdisjoint(real_data.DATASET_FETCHERS)
+
+
+# ---------------------------------------------------------------------------
+# The multiclass grid: one prevalence sequence per dataset, not one shared
+# ---------------------------------------------------------------------------
+
+
+def test_multiclass_target_prevalences_are_on_the_simplex():
+    prevalences = real_data.multiclass_target_prevalences(4, n_prevalences=10, random_state=0)
+
+    assert len(prevalences) == 10
+    for prevalence in prevalences:
+        assert len(prevalence) == 4
+        assert sum(prevalence) == pytest.approx(1.0, abs=1e-3)
+        assert all(share >= 0 for share in prevalence)
+
+
+def test_multiclass_target_prevalences_are_reproducible_from_their_seed():
+    one = real_data.multiclass_target_prevalences(3, n_prevalences=5, random_state=7)
+    another = real_data.multiclass_target_prevalences(3, n_prevalences=5, random_state=7)
+
+    assert one == another
+
+
+def test_multiclass_grid_gives_each_pool_its_own_class_count_worth_of_prevalences():
+    pools = {
+        "three_class": multiclass_pool("three_class", 300, [1 / 3, 1 / 3, 1 / 3]),
+        "four_class": multiclass_pool("four_class", 400, [0.25, 0.25, 0.25, 0.25]),
+    }
+
+    cells = real_data.multiclass_grid(pools, n_prevalences=5, random_state=1)
+
+    by_dataset = {}
+    for cell in cells:
+        by_dataset.setdefault(cell.dataset, []).append(cell.target_prevalence)
+
+    assert set(by_dataset) == set(pools)
+    assert all(len(p) == 3 for p in by_dataset["three_class"])
+    assert all(len(p) == 4 for p in by_dataset["four_class"])
+    assert len(by_dataset["three_class"]) == 5
+
+
+def test_multiclass_grid_draws_a_different_prevalence_sequence_per_dataset():
+    # Two pools of the same class count must not draw the identical grid —
+    # the one thing a shared seed with no per-dataset derivation would do.
+    pools = {
+        "a": multiclass_pool("a", 300, [1 / 3, 1 / 3, 1 / 3]),
+        "b": multiclass_pool("b", 300, [1 / 3, 1 / 3, 1 / 3]),
+    }
+
+    cells = real_data.multiclass_grid(pools, n_prevalences=5, random_state=1)
+
+    by_dataset = {}
+    for cell in cells:
+        by_dataset.setdefault(cell.dataset, []).append(cell.target_prevalence)
+
+    assert by_dataset["a"] != by_dataset["b"]
+
+
+def test_multiclass_grid_is_reproducible_from_its_seed():
+    pools = {"three_class": multiclass_pool("three_class", 300, [1 / 3, 1 / 3, 1 / 3])}
+
+    one = real_data.multiclass_grid(pools, n_prevalences=5, random_state=3)
+    another = real_data.multiclass_grid(pools, n_prevalences=5, random_state=3)
+
+    assert one == another
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +346,63 @@ def test_each_repetition_draws_a_bag_of_its_own(smoke_real_data_spec):
 def test_a_run_records_the_dataset_and_target_prevalence_of_its_cell(mushroom_cell):
     assert set(mushroom_cell["dataset"]) == {"mushroom"}
     assert set(mushroom_cell["target_prevalence"]) == {0.4}
+
+
+# ---------------------------------------------------------------------------
+# A multiclass cell: the same pipeline, a vector prevalence throughout (#14)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def multiclass_cell():
+    """A single smoke cell over a fabricated three-class pool.
+
+    The counterpart of ``mushroom_cell`` above: same full grid of base
+    quantifiers and method-simulator arms, over a dataset no method here was
+    written with only two classes in mind.
+    """
+    pools = {"three_class": multiclass_pool("three_class", 900, [0.2, 0.3, 0.5])}
+    spec = real_data.RealDataSpec(
+        cells=(real_data.Cell(dataset="three_class", target_prevalence=(0.2, 0.3, 0.5)),),
+        pools=pools,
+        method_simulators=sweep.METHOD_SIMULATORS,
+        base_quantifiers=sweep.BASE_QUANTIFIERS,
+        bag_size=100,
+        repetitions=1,
+        seed=20260914,
+    )
+    return real_data.run_cell(spec.cells[0], spec)
+
+
+def test_a_multiclass_cell_produces_runs_the_results_module_recognises(multiclass_cell):
+    assert tuple(multiclass_cell.columns) == runs.columns_for(runs.REAL_DATA)
+
+
+def test_a_multiclass_cell_estimates_its_bags_by_every_method(multiclass_cell):
+    expected = {
+        (base, method)
+        for base in sweep.BASE_QUANTIFIERS
+        if base != runs.BASELINE_QUANTIFIER
+        for method in sweep.METHOD_SIMULATORS
+    } | {(runs.BASELINE_QUANTIFIER, runs.NO_METHOD_SIMULATOR)}
+
+    assert set(
+        zip(multiclass_cell["base_quantifier"], multiclass_cell["method_simulator"])
+    ) == expected
+    assert multiclass_cell["estimated_prevalence"].notna().all()
+
+
+def test_a_multiclass_run_s_target_and_true_prevalence_are_vectors(multiclass_cell):
+    assert set(multiclass_cell["target_prevalence"]) == {(0.2, 0.3, 0.5)}
+    for true_prevalence in multiclass_cell["true_prevalence"]:
+        assert len(true_prevalence) == 3
+        assert sum(true_prevalence) == pytest.approx(1.0)
+
+
+def test_a_multiclass_run_s_estimate_is_a_prevalence_vector(multiclass_cell):
+    for estimate in multiclass_cell["estimated_prevalence"]:
+        assert len(estimate) == 3
+        assert sum(estimate) == pytest.approx(1.0)
 
 
 def test_an_unsatisfiable_cell_records_every_method_as_missing(smoke_real_data_spec):
@@ -500,9 +644,44 @@ def test_a_pool_within_the_cap_is_not_subsampled(raw_frame):
     assert len(built.labels) == len(y)
 
 
-def test_a_non_binary_target_is_rejected():
-    X = pd.DataFrame({"num": [1, 2, 3, 4, 5, 6]})
-    y = pd.Series(["a", "b", "c", "a", "b", "c"])
+def test_a_single_class_target_is_rejected():
+    X = pd.DataFrame({"num": [1, 2, 3, 4]})
+    y = pd.Series(["a", "a", "a", "a"])
 
-    with pytest.raises(ValueError, match="binary"):
+    with pytest.raises(ValueError, match="classes"):
         real_data.build_pool("fake", X, y, cv_folds=3)
+
+
+@pytest.fixture
+def multiclass_raw_frame():
+    """A tiny three-class frame (#14), the multiclass counterpart of
+    ``raw_frame``: enough rows per class for ``cv_folds=3`` to stratify."""
+    rng = np.random.default_rng(0)
+    n = 90
+    X = pd.DataFrame(
+        {"num": rng.normal(size=n), "cat": rng.choice(["a", "b", "?"], size=n)}
+    )
+    y = pd.Series(rng.choice(["low", "mid", "high"], size=n))
+    return X, y
+
+
+def test_a_multiclass_target_is_accepted(multiclass_raw_frame):
+    X, y = multiclass_raw_frame
+
+    built = real_data.build_pool("fake", X, y, cv_folds=3, random_state=0)
+
+    assert built.scores.shape == (len(y), 3)
+    assert set(built.labels) == {0, 1, 2}
+    np.testing.assert_allclose(built.scores.sum(axis=1), 1.0)
+
+
+def test_multiclass_labels_follow_the_sorted_original_label_order(multiclass_raw_frame):
+    # "high" < "low" < "mid" alphabetically — the same sorted-then-indexed
+    # rule _encode_labels applies to two classes, generalised (real_data.py).
+    X, y = multiclass_raw_frame
+
+    built = real_data.build_pool("fake", X, y, cv_folds=3, random_state=0)
+
+    assert set(built.labels[y.to_numpy() == "high"]) == {0}
+    assert set(built.labels[y.to_numpy() == "low"]) == {1}
+    assert set(built.labels[y.to_numpy() == "mid"]) == {2}

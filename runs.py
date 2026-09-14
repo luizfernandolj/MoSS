@@ -38,9 +38,16 @@ tests alone until that lands: the real-data table (ADR-0005, built by #10).
 
 Prevalences are scalars for binary runs and vectors for multiclass ones, in
 the same columns. That is not a schema change (ADR-0003), and
-``absolute_error`` handles both. A run whose estimate could not be produced
-carries a null estimated prevalence rather than being dropped: Haberman cannot
-fill a size-100 bag at high prevalence, and that absence is data (ADR-0005).
+``absolute_error`` handles both — even mixed in the very same column, which a
+real-data table naming both binary and multiclass datasets now does (#14).
+Parquet cannot write that mix directly: a column is one Arrow type, and a bare
+float next to a list is not one it can unify. ``save`` and ``load`` carry the
+column through as a list either way (:func:`_make_storable`, its inverse
+:func:`_restore_scalars`) — a binary run's scalar becomes a list of one on
+disk and comes back off it the same scalar, invisibly to every caller above
+this module. A run whose estimate could not be produced carries a null
+estimated prevalence rather than being dropped: Haberman cannot fill a
+size-100 bag at high prevalence, and that absence is data (ADR-0005).
 """
 
 from pathlib import Path
@@ -194,6 +201,13 @@ def reject_unknown(what, named, known):
         raise ValueError(f"unknown {what} {unknown}; expected one of {tuple(known)}")
 
 
+#: The three columns a prevalence can be recorded in: a target, a truth, and
+#: an estimate. All three carry a vector rather than a scalar for a
+#: multiclass run (module docstring), and all three need the same storage
+#: trick (:func:`_as_storable`) to get there.
+_PREVALENCE_COLUMNS = ("target_prevalence", "true_prevalence", "estimated_prevalence")
+
+
 def save(runs, kind, root=ROOT):
     """Write a table of runs, rejecting anything a reader would misread.
 
@@ -209,6 +223,8 @@ def save(runs, kind, root=ROOT):
     for column, vocabulary in _VOCABULARIES.items():
         if column in expected:
             reject_unknown(column, runs[column].dropna().unique(), vocabulary)
+
+    runs = _make_storable(runs)
 
     path = Path(root) / _FILES[kind]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -230,7 +246,56 @@ def load(kind, root=ROOT, columns=None):
             "0.5.1 port is void (ADR-0001); produce these with "
             "`.venv/bin/python -m sweep` (#9)."
         )
-    return pd.read_parquet(path, columns=columns)
+    return _restore_scalars(pd.read_parquet(path, columns=columns))
+
+
+def _make_storable(runs):
+    """``runs``, with any column holding a multiclass vector safe to write.
+
+    Parquet gives one Arrow type to a column; a binary run's bare float next
+    to a multiclass run's vector is not one type it can unify — writing that
+    mix raises. Wrapping every value in such a column in a list (a binary
+    run's scalar becomes a list of one) makes the column a single, ordinary
+    ``list<double>`` type Arrow already handles at variable length per row,
+    which is all a real-data table mixing binary and multiclass datasets
+    needs. A column with no vector in it at all is untouched, so the
+    synthetic table — always binary — writes exactly as it always has.
+    """
+    runs = runs.copy()
+    for column in _PREVALENCE_COLUMNS:
+        if column in runs.columns and _holds_vectors(runs[column]):
+            runs[column] = runs[column].map(_as_storable)
+    return runs
+
+
+def _restore_scalars(loaded):
+    """The inverse of :func:`_make_storable`: a length-one list is unwrapped
+    back to the scalar it was before writing; a longer one is left a vector.
+    """
+    for column in _PREVALENCE_COLUMNS:
+        if column in loaded.columns and _holds_vectors(loaded[column]):
+            loaded[column] = loaded[column].map(_as_loaded)
+    return loaded
+
+
+def _as_storable(value):
+    """One prevalence cell as Parquet can hold it, in a column that needs the
+    list trick: a multiclass run's own vector, or a binary run's scalar
+    wrapped in a list of one. ``None`` (a missing run, ADR-0005) is untouched.
+    """
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return list(value)
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    return [value]
+
+
+def _as_loaded(value):
+    """The inverse of :func:`_as_storable`."""
+    if value is None:
+        return None
+    array = np.asarray(value)
+    return float(array[0]) if array.size == 1 else array
 
 
 def load_labelled(kind, root=ROOT, columns=None):
@@ -286,9 +351,15 @@ def absolute_error(runs):
     true = runs["true_prevalence"]
     estimated = runs["estimated_prevalence"]
 
-    if _holds_vectors(true):
+    if _holds_vectors(true) or _holds_vectors(estimated):
+        # ``np.mean(np.abs(a - b))`` of two scalars is just ``abs(a - b)``, so
+        # this one formula reads a binary row and a multiclass row alike —
+        # which a real-data table mixing binary and multiclass datasets now
+        # can hold in the very same column (module docstring).
         errors = [
-            np.nan if estimate is None else np.mean(np.abs(np.asarray(estimate) - np.asarray(actual)))
+            np.nan
+            if estimate is None
+            else float(np.mean(np.abs(np.asarray(estimate, dtype=float) - np.asarray(actual, dtype=float))))
             for actual, estimate in zip(true, estimated)
         ]
         return pd.Series(errors, index=runs.index, name="absolute_error")
@@ -297,8 +368,14 @@ def absolute_error(runs):
 
 
 def _holds_vectors(prevalences):
-    for value in prevalences:
-        if value is None:
-            continue
-        return isinstance(value, (list, tuple, np.ndarray))
-    return False
+    """Whether any recorded value in this column is a multiclass vector.
+
+    Checked across every value rather than only the first: a real-data table
+    mixing binary and multiclass datasets holds both shapes in the very same
+    column, so the first row alone no longer says what the rest of it holds.
+    """
+    return any(
+        isinstance(value, (list, tuple, np.ndarray))
+        for value in prevalences
+        if value is not None
+    )

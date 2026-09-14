@@ -31,7 +31,13 @@ from mlquantify.matching import DyS, HDy, SMM, SORD
 from mlquantify.utils import get_prev_from_labels
 
 import runs
-from utils.meta_quantifier import QuaDaptOverCandidates, QuaDaptWithSimulator
+from utils.meta_quantifier import (
+    QuaDaptOverCandidates,
+    QuaDaptWithSimulator,
+    one_vs_rest_labels,
+    one_vs_rest_prevalences,
+    one_vs_rest_view,
+)
 from utils.simulators import (
     DirichletSimulator,
     MVNSimulator,
@@ -81,21 +87,39 @@ class BaselineEstimator(Estimator):
     quantifier: type
 
     def estimate(self, bag_scores):
-        return _positive_share(self.quantifier().aggregate(bag_scores))
+        return _prevalence_value(self.quantifier().aggregate(bag_scores))
 
 
 @dataclass(frozen=True)
 class ReferenceEstimator(Estimator):
-    """A base quantifier matching the bag against the real reference scores."""
+    """A base quantifier matching the bag against the real reference scores.
+
+    Every base quantifier here is binary at its core (utils/meta_quantifier's
+    own module docstring says why); beyond two classes this decomposes
+    one-vs-rest the same way the two meta-quantifier arms do below — a base
+    quantifier run through no meta-quantifier at all is exactly as binary as
+    the ones they wrap, and reads its reference score set the same way.
+    """
 
     quantifier: type
     reference: ReferenceScoreSet
 
     def estimate(self, bag_scores):
-        return _positive_share(
-            self.quantifier().aggregate(
-                bag_scores, self.reference.scores, self.reference.labels
+        classes = np.unique(self.reference.labels)
+        if len(classes) <= 2:
+            return _prevalence_value(
+                self.quantifier().aggregate(
+                    bag_scores, self.reference.scores, self.reference.labels
+                )
             )
+
+        return one_vs_rest_prevalences(
+            classes,
+            lambda i, cls: self.quantifier().aggregate(
+                one_vs_rest_view(bag_scores, i),
+                one_vs_rest_view(self.reference.scores, i),
+                one_vs_rest_labels(self.reference.labels, cls),
+            )[1],
         )
 
 
@@ -133,7 +157,7 @@ class MetaEstimator(Estimator):
             self.random_state,
             **_quadapt_kwargs(self.measure),
         )
-        return _positive_share(meta.aggregate(bag_scores, self.reference.labels))
+        return _prevalence_value(meta.aggregate(bag_scores, self.reference.labels))
 
 
 @dataclass(frozen=True)
@@ -163,7 +187,7 @@ class CandidateEstimator(Estimator):
             self.random_state,
             **_quadapt_kwargs(self.measure),
         )
-        return _positive_share(
+        return _prevalence_value(
             meta.aggregate(bag_scores, self.reference.scores, self.reference.labels)
         )
 
@@ -177,14 +201,18 @@ def _quadapt_kwargs(measure):
     return {} if measure is None else {"measure": measure}
 
 
-def _positive_share(prevalences):
-    """The positive class's share of a binary estimate.
+def _prevalence_value(prevalences):
+    """The value a run's prevalence is stored as: a scalar for a binary
+    estimate, the whole vector for a multiclass one.
 
-    ``prevalences`` is what a quantifier's ``aggregate`` returns: one value per
-    class, in class order. Runs record a binary prevalence as this scalar
-    (ADR-0003); a multiclass run will carry the vector itself, which is #14.
+    ``prevalences`` is what a quantifier's ``aggregate`` returns: one value
+    per class, in class order. A binary run records only the positive
+    class's share (ADR-0003) — the other half is implied. A multiclass run
+    has no such shorthand, so it carries the vector itself (#14); ``runs.py``
+    documents why that is not a schema change.
     """
-    return prevalences[1]
+    prevalences = np.asarray(prevalences)
+    return float(prevalences[1]) if len(prevalences) == 2 else prevalences
 
 
 def observed_prevalence(labels):
@@ -194,14 +222,21 @@ def observed_prevalence(labels):
     the prevalence asked for — which cannot happen here, but does on a real
     dataset (ADR-0005), so both are recorded.
 
-    Deliberately not routed through :func:`_positive_share`, which indexes a
-    sequence: ``get_prev_from_labels`` returns a *mapping* from class label to
-    share, so ``[1]`` there would be a lookup of the label ``1`` that only
-    happens to agree while the simulators label their classes 0 and 1.
+    A scalar for a binary bag, the positive class's share — not routed through
+    :func:`_prevalence_value`, which indexes a sequence, because
+    ``get_prev_from_labels`` returns a *mapping* from class label to share, so
+    ``[1]`` there would be a lookup of the label ``1`` that only happens to
+    agree while the simulators label their classes 0 and 1. A multiclass bag
+    has no positive class to single out, so its full vector is returned
+    instead, in sorted class order (#14) — the same order :func:`_prevalence_
+    value` reports for a multiclass estimate, so the two are comparable
+    without either being told the other's class order.
     """
     by_class = get_prev_from_labels(labels)
-    _, positive = sorted(by_class.items())[1]
-    return positive
+    if len(by_class) <= 2:
+        _, positive = sorted(by_class.items())[1]
+        return positive
+    return np.array([share for _, share in sorted(by_class.items())])
 
 
 # --- The grid --------------------------------------------------------------
@@ -363,6 +398,24 @@ CANDIDATE_DRAW = "candidates"
 BEFORE_ANY_REPETITION = 0
 
 
+def hash_seed(key):
+    """One seed, deterministically derived from ``key`` — any repr-able value.
+
+    Hashed rather than composed by arithmetic, because a caller's key is
+    typically a mix of strings and floats, and with blake2b rather than
+    ``hash`` because Python salts string hashing per process. Cells and pools
+    cross into loky workers on the published path, where a salted hash would
+    seed each worker differently and lose the one property this function
+    exists to have: the same key, hashed twice, is the same seed.
+
+    Shared rather than reimplemented at each site that derives a seed from a
+    key of its own (:func:`seed_for` below; ``real_data._prevalence_grid_
+    seed``) — a second copy of a hash recipe is a second thing to keep
+    agreeing with the first.
+    """
+    return int.from_bytes(hashlib.blake2b(repr(key).encode(), digest_size=8).digest(), "big")
+
+
 def seed_for(spec, cell, repetition, draw):
     """The seed for one draw: which cell, which repetition, which of the three.
 
@@ -376,12 +429,6 @@ def seed_for(spec, cell, repetition, draw):
     ``None`` in, ``None`` out. A spec with no seed draws from OS entropy, and
     deriving a seed from ``None`` would take that option away.
 
-    Hashed rather than composed by arithmetic because a cell is strings and
-    floats, and with blake2b rather than ``hash`` because Python salts string
-    hashing per process. Cells cross into loky workers on the published path,
-    where a salted hash would seed each worker differently and lose the one
-    property this function exists to have.
-
     Deliberately *not* a function of the base quantifier. Every base quantifier
     in a cell sees the same bag and the same simulated candidates, so the only
     thing varying between their estimates is the quantifier itself — which is
@@ -391,10 +438,7 @@ def seed_for(spec, cell, repetition, draw):
     if spec.seed is None:
         return None
 
-    key = (spec.seed, dataclasses.astuple(cell), repetition, draw)
-    return int.from_bytes(
-        hashlib.blake2b(repr(key).encode(), digest_size=8).digest(), "big"
-    )
+    return hash_seed((spec.seed, dataclasses.astuple(cell), repetition, draw))
 
 
 # --- Running a cell --------------------------------------------------------

@@ -208,6 +208,25 @@ def test_a_reference_estimator_changes_its_answer_when_the_reference_does(bag, r
     ).estimate(bag)
 
 
+def test_a_reference_estimator_decomposes_one_vs_rest_beyond_two_classes():
+    # No meta-quantifier sits in front of this arm, so it is exactly as binary
+    # at its core as the ones utils/meta_quantifier wraps (#14). A
+    # well-separated three-class reference and bag let DyS recover the bag's
+    # own composition through the decomposition.
+    simulator = MVNSimulator()
+    reference_scores, reference_labels = simulator(
+        1500, [1 / 3, 1 / 3, 1 / 3], 0.05, random_state=1
+    )
+    bag_scores, _ = simulator(200, [0.2, 0.3, 0.5], 0.05, random_state=2)
+
+    prevalences = ReferenceEstimator(
+        DyS, ReferenceScoreSet(reference_scores, reference_labels)
+    ).estimate(bag_scores)
+
+    assert prevalences.sum() == pytest.approx(1.0)
+    np.testing.assert_allclose(prevalences, [0.2, 0.3, 0.5], atol=0.1)
+
+
 def test_a_meta_estimator_reads_the_reference_labels_but_not_its_scores(bag, reference):
     # A meta-quantifier does not match against the real reference score set at
     # all: it simulates candidates and picks one. The reference is there only
@@ -301,6 +320,25 @@ def test_two_candidate_estimators_on_different_seeds_draw_different_candidates(
     another = CandidateEstimator(DyS, (UniformSimulator(),), rejected_reference, 2)
 
     assert one.estimate(bag) != another.estimate(bag)
+
+
+# ---------------------------------------------------------------------------
+# The prevalence of a bag actually drawn
+# ---------------------------------------------------------------------------
+
+
+def test_observed_prevalence_of_a_binary_bag_is_the_positive_share():
+    _, labels = scored(100, 0.3)
+
+    assert sweep.observed_prevalence(labels) == pytest.approx(0.3)
+
+
+def test_observed_prevalence_of_a_multiclass_bag_is_the_whole_vector():
+    _, labels = MVNSimulator()(1000, [0.2, 0.3, 0.5], 0.3, random_state=0)
+
+    prevalence = sweep.observed_prevalence(labels)
+
+    np.testing.assert_allclose(prevalence, [0.2, 0.3, 0.5], atol=0.02)
 
 
 # ---------------------------------------------------------------------------

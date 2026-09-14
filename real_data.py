@@ -20,8 +20,17 @@ class by class. That is what lets a cell fail explicitly: Haberman has 81
 minority instances, so no bag at or above 82% positive can be filled from it,
 and :func:`draw_bag` says so with ``None`` rather than padding the shortfall
 with a repeated instance.
+
+Everything above is binary-or-multiclass alike (#14): a pool, a bag and a
+cell are the same shapes either way, and the estimator adapters decompose
+one-vs-rest beyond two classes (``utils/meta_quantifier.py``). What differs
+for a multiclass dataset is the target-prevalence grid — a shared sequence of
+scalars cannot describe a class count :func:`grid` was not built for — so
+:func:`multiclass_grid` and :func:`build_multiclass_spec` stand beside
+:func:`grid` and :func:`build_spec` rather than replacing them.
 """
 
+import hashlib
 import sys
 import time
 from dataclasses import dataclass
@@ -110,18 +119,96 @@ class Cell:
     The counterpart of ``sweep.Cell`` without the axes a real dataset has no
     say over — there is no simulator or merging factor here, only which pool
     a bag comes from and the prevalence it is asked for.
+
+    ``target_prevalence`` is a float for a binary dataset and a tuple for a
+    multiclass one (#14, mirroring ``runs.py``'s own scalar-or-vector
+    convention) — a tuple rather than a list or array so that ``Cell`` stays
+    hashable, which the grid being a *set* of cells (below, and in the tests)
+    depends on.
     """
 
     dataset: str
-    target_prevalence: float
+    target_prevalence: Union[float, Tuple[float, ...]]
 
 
 def grid(datasets, target_prevalences):
-    """Every cell of the cross-product: each dataset at every prevalence."""
+    """Every cell of the cross-product: each dataset at every prevalence.
+
+    One ``target_prevalences`` sequence shared by every dataset — right for
+    binary datasets, which all describe the same one-number share of the same
+    two classes. A multiclass dataset's prevalence is a vector sized to its
+    own class count, which no cross-product over one shared sequence can
+    describe; :func:`multiclass_grid` builds that grid instead.
+    """
     return tuple(
         Cell(dataset=dataset, target_prevalence=target_prevalence)
         for dataset in datasets
         for target_prevalence in target_prevalences
+    )
+
+
+#: How many prevalence vectors :func:`multiclass_grid` draws per dataset.
+#: Matches binary's own :data:`TARGET_PREVALENCES` in count, so a multiclass
+#: dataset's grid costs about as much to run as a binary one's.
+N_MULTICLASS_PREVALENCES = 21
+
+
+def multiclass_target_prevalences(n_classes, n_prevalences=N_MULTICLASS_PREVALENCES, random_state=None):
+    """``n_prevalences`` prevalence vectors of ``n_classes``, uniform on the simplex.
+
+    A Dirichlet draw with every concentration at 1 is the uniform distribution
+    over the simplex — the direct generalisation of bracketing ``[0, 1]``
+    evenly that :data:`TARGET_PREVALENCES` does for one class's share, without
+    depending on the sampling helpers behind mlquantify's own protocols
+    (``mlquantify.utils._sampling``, private and shaped for drawing bags
+    rather than for naming a grid of prevalences).
+
+    Rounded for the same reason :data:`TARGET_PREVALENCES` is: a renderer or a
+    reader grouping runs by their target prevalence needs a value that repeats
+    exactly, not one that differs in its sixteenth decimal from one call to
+    the next. :func:`utils.simulators.as_prevalence` renormalises before a
+    draw reads it, so the rounding error this leaves in a row's sum is never
+    seen downstream.
+    """
+    drawn = np.random.default_rng(random_state).dirichlet(
+        np.ones(n_classes), size=n_prevalences
+    )
+    return tuple(tuple(round(float(share), 4) for share in row) for row in drawn)
+
+
+def _prevalence_grid_seed(seed, dataset):
+    """One dataset's own seed for :func:`multiclass_target_prevalences`.
+
+    Derived from the spec's seed and the dataset's name, the same reason
+    ``sweep.seed_for`` derives a cell's seed rather than sharing one across a
+    grid: without it, every multiclass pool would draw the identical grid of
+    prevalences. ``sweep.hash_seed`` is the shared hashing recipe both
+    functions derive a seed through, so there is one rule to keep reproducible
+    across a loky worker boundary rather than two copies of it.
+    """
+    if seed is None:
+        return None
+    return sweep.hash_seed((seed, dataset))
+
+
+def multiclass_grid(pools, n_prevalences=N_MULTICLASS_PREVALENCES, random_state=None):
+    """Every multiclass cell: each pool at its own prevalence grid.
+
+    The counterpart of :func:`grid` for pools whose class counts differ from
+    one another: a 7-class and a 10-class pool cannot share one
+    ``target_prevalences`` sequence, so each pool's grid is drawn from its own
+    class count (:func:`multiclass_target_prevalences`), seeded so that two
+    pools sharing a class count still draw different grids
+    (:func:`_prevalence_grid_seed`).
+    """
+    return tuple(
+        Cell(dataset=name, target_prevalence=target_prevalence)
+        for name, pool in pools.items()
+        for target_prevalence in multiclass_target_prevalences(
+            len(pool.classes),
+            n_prevalences,
+            random_state=_prevalence_grid_seed(random_state, name),
+        )
     )
 
 
@@ -346,25 +433,37 @@ DATASET_FETCHERS = {
     "online_news_popularity": mlquantify_datasets.fetch_online_news_popularity,
 }
 
+#: Multiclass tabular datasets (#14): evidence that the simplex simulators
+#: (MVN, Dirichlet) do work the binary uniform simulator cannot even attempt
+#: (CONTEXT.md). Two rather than a matching eight — this table's question is
+#: whether the simplex simulators generalise at all, not a second ADR-0005
+#: coverage claim — chosen for different class counts (7 and 10) so the
+#: pipeline is exercised at more than one simplex dimension.
+MULTICLASS_DATASET_FETCHERS = {
+    "dry_bean": mlquantify_datasets.fetch_dry_bean,
+    "yeast": mlquantify_datasets.fetch_yeast,
+}
+
 #: Where fetched datasets are cached, anchored to this file for the same
 #: reason ``runs.ROOT`` is: a caller launched from another directory must
 #: still hit the same cache.
 DATA_HOME = Path(__file__).resolve().parent / "results" / "datasets"
 
 
-def _binary_labels(y):
-    """``y`` as 0/1, the higher-sorted original label mapped to 1.
+def _encode_labels(y):
+    """``y`` as ``0 .. n_classes - 1``, in sorted order of the original labels.
 
-    The same rule ``sweep.observed_prevalence`` reads a drawn bag's
-    prevalence by, so "positive" means the same thing on a real dataset as it
-    does in a synthetic run.
+    Binary or multiclass alike (#14): for two classes this is exactly
+    ``_binary_labels``'s own rule — the higher-sorted original label maps to
+    1 — which is the same rule ``sweep.observed_prevalence`` reads a drawn
+    bag's prevalence by, so "positive" means the same thing on a real dataset
+    as it does in a synthetic run. A dataset of one class only is rejected:
+    there is no prevalence to estimate on a pool with nothing to distinguish.
     """
     classes = np.sort(pd.unique(np.asarray(y)))
-    if len(classes) != 2:
-        raise ValueError(
-            f"expected a binary target, got {len(classes)} classes: {classes!r}"
-        )
-    return (np.asarray(y) == classes[1]).astype(int)
+    if len(classes) < 2:
+        raise ValueError(f"expected at least two classes, got {classes!r}")
+    return np.searchsorted(classes, np.asarray(y))
 
 
 def _numeric_features(X):
@@ -408,7 +507,7 @@ def build_pool(name, X, y, *, cap=POOL_CAP, cv_folds=10, random_state=None):
     can build a pool from a fabricated frame without reaching the network.
     """
     X = _numeric_features(X)
-    y = _binary_labels(y)
+    y = _encode_labels(y)
     X, y = _capped(X, y, cap, random_state)
 
     oof_scores = cross_val_predict(
@@ -421,13 +520,20 @@ def build_pool(name, X, y, *, cap=POOL_CAP, cv_folds=10, random_state=None):
     return Pool(dataset=name, scores=oof_scores, labels=y)
 
 
+#: Every fetcher this module knows how to name a pool from, binary and
+#: multiclass together — one lookup for :func:`fetch_pool`, which does not
+#: itself care which kind of dataset it was asked for.
+_ALL_DATASET_FETCHERS = {**DATASET_FETCHERS, **MULTICLASS_DATASET_FETCHERS}
+
+
 def fetch_pool(name, *, data_home=DATA_HOME, cap=POOL_CAP, cv_folds=10, random_state=None):
     """Fetch, cache and score one dataset by name (ADR-0005).
 
     The one function in this module that reaches the network — everything
-    downstream of :class:`Pool` neither knows nor cares where it came from.
+    downstream of :class:`Pool` neither knows nor cares where it came from, or
+    whether it is binary or multiclass (#14).
     """
-    fetch = DATASET_FETCHERS[name]
+    fetch = _ALL_DATASET_FETCHERS[name]
     X, y = fetch(data_home=str(data_home), return_X_y=True)
     return build_pool(name, X, y, cap=cap, cv_folds=cv_folds, random_state=random_state)
 
@@ -471,6 +577,27 @@ def build_spec(pools, *, seed=None, measure=None):
     )
 
 
+def build_multiclass_spec(pools, *, seed=None, measure=None, n_prevalences=N_MULTICLASS_PREVALENCES):
+    """The multiclass real-data spec (#14): :func:`build_spec`'s sibling.
+
+    Same estimator block and the same bag size and repetitions — a method
+    means the same thing whether the dataset behind it is binary or
+    multiclass — differing only in how the grid is built: each pool's own
+    prevalence vectors (:func:`multiclass_grid`) rather than one prevalence
+    sequence shared across datasets.
+    """
+    return RealDataSpec(
+        cells=multiclass_grid(pools, n_prevalences, random_state=seed),
+        pools=pools,
+        method_simulators=sweep.METHOD_SIMULATORS,
+        base_quantifiers=sweep.BASE_QUANTIFIERS,
+        bag_size=100,
+        repetitions=10,
+        seed=seed,
+        measure=measure,
+    )
+
+
 def _main():
     import argparse
 
@@ -478,17 +605,29 @@ def _main():
     parser.add_argument(
         "--dataset",
         choices=tuple(DATASET_FETCHERS),
-        help="run one dataset only, rather than all eight",
+        help="run one binary dataset only, rather than all eight",
+    )
+    parser.add_argument(
+        "--multiclass",
+        action="store_true",
+        help="run the multiclass datasets (#14) instead of the eight binary ones",
     )
     args = parser.parse_args()
 
-    names = (args.dataset,) if args.dataset else tuple(DATASET_FETCHERS)
+    if args.multiclass:
+        if args.dataset:
+            raise SystemExit("--dataset names a binary dataset; it cannot be combined with --multiclass")
+        names = tuple(MULTICLASS_DATASET_FETCHERS)
+    else:
+        names = (args.dataset,) if args.dataset else tuple(DATASET_FETCHERS)
+
     pools = {
         name: fetch_pool(name, random_state=20260911)
         for name in _progress(names, total=len(names), desc="datasets", colour="blue")
     }
 
-    produced = run_sweep(build_spec(pools, seed=20260911), n_jobs=-1, progress=True)
+    spec_builder = build_multiclass_spec if args.multiclass else build_spec
+    produced = run_sweep(spec_builder(pools, seed=20260911), n_jobs=-1, progress=True)
 
     # Not sweep.validate_and_save: its collapse check (sweep.validate_no_
     # collapsed_groups) is calibrated against the synthetic sweep's continuous

@@ -52,6 +52,39 @@ def test_score_rows_sum_to_one_with_more_than_two_classes(simulator):
     assert scores.sum(axis=1) == pytest.approx(1.0)
 
 
+@multiclass_simulators
+def test_scores_stay_on_the_simplex_with_more_than_two_classes(simulator):
+    # Summing to one (above) is necessary but not sufficient for the simplex —
+    # a row could sum to one with a negative share offset by one over one.
+    # Both implementations guarantee non-negativity by construction (the MVN
+    # simulator folds a draw with ``abs``; the Dirichlet simulator draws on
+    # the simplex directly), asserted here rather than trusted.
+    scores, _ = simulator(900, [0.2, 0.3, 0.5], 0.5, random_state=0)
+
+    assert (scores >= 0).all()
+
+
+@multiclass_simulators
+def test_a_low_merging_factor_concentrates_each_class_near_its_own_vertex(simulator):
+    # ADR-0008: each class is centred on its own simplex vertex. Near the
+    # simulator's floor, a class's own coordinate should be its largest —
+    # separation a caller of the interface cannot see directly, but which is
+    # the entire reason this arm exists over the uniform simulator's binary
+    # construction (CONTEXT.md's "MVN simulator" and "Dirichlet simulator").
+    n_classes = 4
+    scores, labels = simulator(
+        2000, [1 / n_classes] * n_classes, 0.05, random_state=0
+    )
+
+    own_coordinate = scores[np.arange(len(scores)), labels]
+    largest_coordinate = scores.max(axis=1)
+
+    # Well clear of the 0.25 four-way chance rate; not tighter than 0.8
+    # because the Dirichlet simulator clips its floor at 0.1 (ADR-0008),
+    # coarser than the 0.05 asked for here.
+    assert (own_coordinate == largest_coordinate).mean() > 0.8
+
+
 @all_simulators
 @pytest.mark.parametrize(
     "positive, expected",

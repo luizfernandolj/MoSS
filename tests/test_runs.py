@@ -189,6 +189,62 @@ def test_a_prevalence_vector_needs_no_schema_change(results_root, real_data_runs
     assert list(loaded.loc[0, "estimated_prevalence"]) == [0.1, 0.4, 0.5]
 
 
+def _put_vector(frame, row, **columns):
+    """Set cells of ``frame`` at ``row`` to list values, in place.
+
+    Plain ``.at``/``.loc`` assignment on a float64 column tries to broadcast a
+    list across the column rather than storing it in one cell; casting to
+    ``object`` first is what makes a single cell able to hold one.
+    """
+    for column, value in columns.items():
+        frame[column] = frame[column].astype(object)
+        frame.at[row, column] = value
+
+
+def test_a_table_naming_both_binary_and_multiclass_datasets_round_trips(
+    results_root, real_data_runs
+):
+    # The real scenario the vector trick exists for (#14): one real-data table
+    # naming eight binary datasets and however many multiclass ones, so the
+    # very column that is a plain float for one row is a vector for the next.
+    mixed = real_data_runs.copy()
+    _put_vector(
+        mixed,
+        0,
+        true_prevalence=[0.2, 0.3, 0.5],
+        estimated_prevalence=[0.1, 0.4, 0.5],
+        target_prevalence=[0.2, 0.3, 0.5],
+    )
+
+    runs.save(mixed, runs.REAL_DATA, root=results_root)
+    loaded = runs.load(runs.REAL_DATA, root=results_root)
+
+    assert list(loaded.loc[0, "estimated_prevalence"]) == [0.1, 0.4, 0.5]
+    assert loaded.loc[1, "estimated_prevalence"] == pytest.approx(
+        mixed.loc[1, "estimated_prevalence"]
+    )
+    assert isinstance(loaded.loc[1, "estimated_prevalence"], float)
+
+
+def test_a_missing_estimate_stays_missing_in_a_mixed_table(results_root, real_data_runs):
+    mixed = real_data_runs.copy()
+    _put_vector(
+        mixed,
+        0,
+        true_prevalence=[0.2, 0.3, 0.5],
+        estimated_prevalence=None,
+        target_prevalence=[0.2, 0.3, 0.5],
+    )
+
+    runs.save(mixed, runs.REAL_DATA, root=results_root)
+
+    loaded = runs.load(runs.REAL_DATA, root=results_root)
+    assert pd.isna(loaded.loc[0, "estimated_prevalence"])
+    assert loaded.loc[1, "estimated_prevalence"] == pytest.approx(
+        mixed.loc[1, "estimated_prevalence"]
+    )
+
+
 # ---------------------------------------------------------------------------
 # Saving rejects what the readers would otherwise have to guess about
 # ---------------------------------------------------------------------------
@@ -292,6 +348,22 @@ def test_absolute_error_averages_over_the_classes_of_a_prevalence_vector():
     )
 
     assert runs.absolute_error(vectors).loc[0] == pytest.approx(0.2 / 3)
+
+
+def test_absolute_error_reads_a_scalar_and_a_vector_row_in_the_same_column():
+    # The real-data table's own shape once it names both binary and
+    # multiclass datasets (#14): one column, two kinds of row.
+    mixed = pd.DataFrame(
+        {
+            "true_prevalence": [0.4, [0.2, 0.3, 0.5]],
+            "estimated_prevalence": [0.5, [0.1, 0.4, 0.5]],
+        }
+    )
+
+    error = runs.absolute_error(mixed)
+
+    assert error.loc[0] == pytest.approx(0.1)
+    assert error.loc[1] == pytest.approx(0.2 / 3)
 
 
 # ---------------------------------------------------------------------------

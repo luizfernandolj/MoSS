@@ -11,6 +11,24 @@ by *every* simulator, and the real reference scores besides, instead of
 committing to one. It replaces a class that did the same thing by rebinding
 its own ``MoSS`` attribute mid-aggregation and re-implementing the library's
 mixture search against an API that no longer exists (ADR-0010).
+
+Both classes are binary at their core — ``best_mixture``'s histogram and SORD
+searches, and ``QuaDaptOverCandidates._distance_to``, all read a two-column
+score matrix. Beyond two classes each decomposes one-vs-rest instead: every
+class in turn plays the positive share of its own binary sub-problem against
+every other class merged into "rest", and the per-class shares renormalise
+into one prevalence vector (:func:`one_vs_rest_prevalences`). mlquantify
+ships an OvR decomposition of its own (``mlquantify.multiclass.binary_
+quantifier``), but it is fit-based: it populates one binary sub-quantifier
+per class in ``fit`` and reads them back in ``aggregate``, which this
+project's estimator seam has nothing to call — every quantifier here, base or
+meta, is reached through ``aggregate`` alone, on scores a classifier already
+produced (ADR-0009). Both classes below build the same n-way decomposition
+without a ``fit`` step, going straight to a binary ``aggregate`` call per
+class — the same shape ``sweep.ReferenceEstimator`` uses for a base
+quantifier run through no meta-quantifier at all, which is why the
+decomposition's shared loop (:func:`one_vs_rest_prevalences`) lives here
+rather than being written out three times.
 """
 
 #: The measures mlquantify searches with a histogram rather than on the raw
@@ -23,6 +41,66 @@ from dataclasses import dataclass
 import numpy as np
 from mlquantify.meta import QuaDapt
 from mlquantify.utils import resolve_aggregate_classes, validate_prevalences
+
+# --- One-vs-rest decomposition ----------------------------------------------
+#
+# Shared by both meta-quantifiers below, and by sweep.ReferenceEstimator: a
+# base quantifier run with no meta-quantifier at all is exactly as binary as
+# the ones wrapped here, and reads its own reference score set the same way.
+
+
+def one_vs_rest_view(scores, class_index):
+    """Column ``class_index`` of an n-class score matrix, as a binary view.
+
+    A two-column ``[rest, class]`` matrix a quantifier built for two classes
+    can read unchanged: everything that is not ``class_index`` collapses into
+    "rest", the same reduction one-vs-rest always makes.
+    """
+    scores = np.asarray(scores, dtype=float)
+    positive = scores[:, class_index]
+    return np.column_stack((1 - positive, positive))
+
+
+def one_vs_rest_labels(labels, cls):
+    """``labels`` as 0/1: 1 where a row is ``cls``, 0 for every other class."""
+    return (np.asarray(labels) == cls).astype(int)
+
+
+def combine_one_vs_rest(shares):
+    """Per-class one-vs-rest shares, renormalised into one prevalence vector.
+
+    Each share comes from its own independent binary sub-problem, so nothing
+    makes them sum to one on their own — a bag every sub-problem reads as
+    mostly "rest" would have every share low. Renormalising is what turns n
+    independent binary answers back into one n-class prevalence, the same way
+    upstream's own OvR strategy does (``mlquantify.multiclass._aggregate_ovr``
+    by construction, since it too feeds :func:`validate_prevalences` an
+    unnormalised per-class dict).
+    """
+    shares = np.asarray(shares, dtype=float)
+    total = shares.sum()
+    if total <= 0:
+        return np.full(len(shares), 1.0 / len(shares))
+    return shares / total
+
+
+def one_vs_rest_prevalences(classes, positive_share_for):
+    """A prevalence vector from n one-vs-rest binary sub-problems, one per class.
+
+    ``positive_share_for(class_index, cls)`` runs that class's own binary
+    sub-problem and returns its positive share; called once per entry of
+    ``classes``, in order, and the results combined (:func:`combine_one_vs_
+    rest`). The one shape this project's three one-vs-rest decompositions
+    share — the two meta-quantifiers below, and a plain base quantifier run
+    through no meta-quantifier at all (``sweep.ReferenceEstimator``) — even
+    though what each does *inside* a class's sub-problem differs: a meta-
+    quantifier's own mixture search, a candidate search across simulators, or
+    a bare ``aggregate`` call. That difference is exactly what
+    ``positive_share_for`` closes over, so this function needs to know
+    nothing about it.
+    """
+    shares = [positive_share_for(i, cls) for i, cls in enumerate(classes)]
+    return combine_one_vs_rest(shares)
 
 
 class QuaDaptWithSimulator(QuaDapt):
@@ -48,7 +126,7 @@ class QuaDaptWithSimulator(QuaDapt):
         self.random_state = random_state
         self._candidate_draws = np.random.default_rng(random_state)
 
-    def aggregate(self, *args, **kwargs):
+    def aggregate(self, predictions, y_train, classes=None):
         """One estimate, one stream.
 
         The library calls :meth:`MoSS` several times per estimate — once per
@@ -58,12 +136,39 @@ class QuaDaptWithSimulator(QuaDapt):
         true: an estimate is reproducible from the estimator that made it,
         however many estimates that estimator has already made.
 
-        Forwarded blind rather than by name, for the reason the class comment
-        gives: restating upstream's signature here would freeze a copy of it
-        that no test compares against the original.
+        Named rather than forwarded blind (``*args, **kwargs``) as this method
+        used to be. That was deliberate, guarding against the ADR-0007 trap:
+        restating an upstream *value* here — a default, a literal — freezes a
+        copy nothing compares against the original, and it can drift silently.
+        Naming ``predictions``/``y_train``/``classes`` restates upstream's
+        *signature* instead, which this override already committed to the
+        moment it started forwarding ``super().aggregate(...)``'s two
+        positional arguments (below, and in every call this project makes
+        through ``sweep.MetaEstimator``) — the coupling is not new, only now
+        visible in the ``def`` line. If upstream ever changes that signature,
+        this raises a ``TypeError`` at the call site, not a value silently out
+        of step with its source, which is the failure ADR-0007 exists to
+        prevent. One-vs-rest decomposition (module docstring) is why the
+        change was worth making: it needs ``classes`` resolved once, up front,
+        to know whether there is any decomposing to do at all.
         """
         self._candidate_draws = np.random.default_rng(self.random_state)
-        return super().aggregate(*args, **kwargs)
+        classes = resolve_aggregate_classes(self, classes, y_train)
+
+        if len(classes) <= 2:
+            return super().aggregate(predictions, y_train, classes=classes)
+
+        predictions = np.asarray(predictions, dtype=float)
+        prevalences = one_vs_rest_prevalences(
+            classes,
+            lambda i, cls: self._original_aggregate(
+                one_vs_rest_view(predictions, i),
+                one_vs_rest_labels(y_train, cls),
+                classes=np.array([0, 1]),
+            )[1],
+        )
+        self.classes_ = classes
+        return validate_prevalences(self, prevalences, classes)
 
     def MoSS(self, n, alpha, merging_factor, classes=None, random_state=None):
         """Draw one candidate score set, seeded whether or not the caller says.
@@ -151,10 +256,51 @@ class QuaDaptOverCandidates(QuaDapt):
         prevalence each candidate's mixture implies is found along the way and
         thrown away, because the base quantifier is what produces the estimate
         — the property whose absence let ADR-0001's defect stand.
+
+        Beyond two classes this is one-vs-rest decomposed (module docstring):
+        one binary candidate search per class, each choosing independently
+        among that class's own binary view of every candidate, recombined by
+        :func:`one_vs_rest_prevalences`. One draw stream is opened here and
+        threaded through every class's search — the same "one estimate, one
+        stream" property :meth:`QuaDaptWithSimulator.aggregate` keeps — so
+        that classes draw different candidates from each other rather than
+        the identical ones a fresh stream per class would repeat.
         """
         classes = resolve_aggregate_classes(self, classes, reference_labels)
-        candidates = self.candidates(reference_scores, reference_labels, classes)
 
+        if len(classes) <= 2:
+            return self._aggregate_binary(
+                predictions, reference_scores, reference_labels, classes
+            )
+
+        predictions = np.asarray(predictions, dtype=float)
+        reference_labels = np.asarray(reference_labels)
+        draws = np.random.default_rng(self.random_state)
+
+        prevalences = one_vs_rest_prevalences(
+            classes,
+            lambda i, cls: self._aggregate_binary(
+                one_vs_rest_view(predictions, i),
+                one_vs_rest_view(reference_scores, i),
+                one_vs_rest_labels(reference_labels, cls),
+                np.array([0, 1]),
+                random_state=draws,
+            )[1],
+        )
+        return validate_prevalences(self, prevalences, classes)
+
+    def _aggregate_binary(
+        self, predictions, reference_scores, reference_labels, classes, random_state=None
+    ):
+        """The binary search :meth:`aggregate` ran before one-vs-rest existed.
+
+        Its own method so that :meth:`aggregate` can call it once per class:
+        every argument a caller varies per class is a parameter here, nothing
+        is read off ``self`` but the quantifier and the simulators themselves.
+        """
+        candidates = self.candidates(
+            reference_scores, reference_labels, classes, random_state=random_state
+        )
         best = min(
             candidates,
             key=lambda candidate: self._distance_to(predictions, candidate, classes),
@@ -163,7 +309,7 @@ class QuaDaptOverCandidates(QuaDapt):
         prevalences = self.quantifier.aggregate(predictions, best.scores, best.labels)
         return validate_prevalences(self, prevalences, classes)
 
-    def candidates(self, reference_scores, reference_labels, classes=None):
+    def candidates(self, reference_scores, reference_labels, classes=None, random_state=None):
         """Every score set this arm will choose between, the real one first.
 
         The real reference is a candidate in its own right — the question this
@@ -183,9 +329,18 @@ class QuaDaptOverCandidates(QuaDapt):
         a whole repeats, and no seeding state outlives the call. The other arm
         cannot do it this way — the library calls its ``MoSS`` seam, so the
         stream has to be reachable from an attribute (ADR-0011).
+
+        ``random_state`` overrides ``self.random_state`` when given — how
+        :meth:`aggregate`'s one-vs-rest decomposition threads one stream
+        through several calls to this method instead of every class reopening
+        the same one (and so drawing the same candidates as every other
+        class). A single call with no override, as every caller outside this
+        class makes, is unaffected.
         """
         classes = resolve_aggregate_classes(self, classes, reference_labels)
-        draws = np.random.default_rng(self.random_state)
+        draws = np.random.default_rng(
+            self.random_state if random_state is None else random_state
+        )
 
         return [
             CandidateScoreSet(reference_scores, reference_labels),

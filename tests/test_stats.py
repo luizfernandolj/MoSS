@@ -11,7 +11,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import real_data
+import runs
 import stats
+import sweep
+from tests.score_sets import scored
+from utils.simulators import MVNSimulator
 
 
 def _row(*, dataset, method, absolute_error):
@@ -295,3 +300,69 @@ def test_pairwise_signed_rank_ignores_a_coverage_gap_in_an_unrelated_method(
     comparison = stats.pairwise_signed_rank(incomplete, "A", "C")
 
     assert comparison.n_datasets == len(DATASETS)
+
+
+# ---------------------------------------------------------------------------
+# A real-data table naming both binary and multiclass datasets (#14)
+# ---------------------------------------------------------------------------
+#
+# This module's own acceptance criterion for #14: nothing here should need to
+# change once the real-data table names a multiclass dataset alongside the
+# binary ones, because every function above reads ``absolute_error`` alone —
+# never a raw prevalence column, which is the one thing a multiclass run
+# carries differently (a vector rather than a scalar, ``runs.py``). Built from
+# the real pipeline (``real_data.run_sweep``) rather than a synthetic frame:
+# what is under test is that the *shape* those runs come back in is one this
+# module already handles, not a claim about this module's own logic, which
+# the rest of this file already covers.
+
+
+@pytest.fixture
+def binary_and_multiclass_labelled_runs():
+    binary_scores, binary_labels = scored(300, 0.4)
+    multiclass_scores, multiclass_labels = MVNSimulator()(
+        300, [0.3, 0.3, 0.4], 0.2, random_state=0
+    )
+
+    spec = real_data.RealDataSpec(
+        cells=(
+            real_data.Cell(dataset="binary", target_prevalence=0.4),
+            real_data.Cell(dataset="multiclass", target_prevalence=(0.3, 0.3, 0.4)),
+        ),
+        pools={
+            "binary": real_data.Pool(dataset="binary", scores=binary_scores, labels=binary_labels),
+            "multiclass": real_data.Pool(
+                dataset="multiclass", scores=multiclass_scores, labels=multiclass_labels
+            ),
+        },
+        method_simulators={runs.NO_METHOD_SIMULATOR: None},
+        base_quantifiers={
+            name: sweep.BASE_QUANTIFIERS[name] for name in ("DyS", "TAC", "T50")
+        },
+        bag_size=100,
+        repetitions=3,
+        seed=1,
+    )
+
+    produced = real_data.run_sweep(spec)
+    return produced.assign(
+        method=runs.method_labels(produced),
+        absolute_error=runs.absolute_error(produced),
+    )
+
+
+def test_average_ranks_reads_a_table_naming_binary_and_multiclass_datasets(
+    binary_and_multiclass_labelled_runs,
+):
+    ranks = stats.average_ranks(binary_and_multiclass_labelled_runs)
+
+    assert set(ranks.index) == {"DyS", "TAC", "T50"}
+
+
+def test_friedman_reads_a_table_naming_binary_and_multiclass_datasets(
+    binary_and_multiclass_labelled_runs,
+):
+    result = stats.friedman(binary_and_multiclass_labelled_runs)
+
+    assert result.n_datasets == 2
+    assert result.n_methods == 3
