@@ -30,7 +30,6 @@ scalars cannot describe a class count :func:`grid` was not built for — so
 :func:`grid` and :func:`build_spec` rather than replacing them.
 """
 
-import dataclasses
 import hashlib
 import sys
 import time
@@ -390,21 +389,15 @@ def run_sweep(spec, n_jobs=1, progress=False):
 def run_bag_size_sweep(spec, bag_sizes=sweep.BAG_SIZES, n_jobs=1, progress=False):
     """Run ``spec`` once per bag size and stack the runs into one frame.
 
-    ``sweep.run_bag_size_sweep`` in every respect but the sweep-running
-    function it reuses: this module's own :func:`run_sweep` rather than
-    ``sweep.run_sweep``, over ``runs.REAL_DATA``'s columns rather than the
-    synthetic table's. ``bag_size`` needs no stamp afterwards, the same
-    reason it needs none there: :func:`run_cell` already records
-    ``spec.bag_size`` on every row it produces.
+    ``sweep.run_bag_size_sweep`` already takes ``run`` and ``kind`` apart from
+    the loop over bag sizes for exactly this: this module's own
+    :func:`run_sweep` matches the calling convention it expects, so this is a
+    delegation rather than a second copy of the replace/concat loop.
     """
-    columns = list(runs.columns_for(runs.REAL_DATA))
-    swept = [
-        run_sweep(dataclasses.replace(spec, bag_size=bag_size), n_jobs=n_jobs, progress=progress)
-        for bag_size in bag_sizes
-    ]
-    if not swept:
-        return pd.DataFrame(columns=columns)
-    return pd.concat(swept, ignore_index=True)[columns]
+    return sweep.run_bag_size_sweep(
+        spec, run=run_sweep, bag_sizes=bag_sizes, kind=runs.REAL_DATA,
+        n_jobs=n_jobs, progress=progress,
+    )
 
 
 def _frame(rows):
