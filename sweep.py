@@ -547,6 +547,15 @@ def run_cell(cell, spec):
     return _frame(rows)
 
 
+#: MS2's own warning when none of its candidate thresholds clear its
+#: reliability filter, verbatim from ``mlquantify.counting.MS2`` — a
+#: documented, benign fallback to plain MS behaviour (ADR-0012), not a defect.
+#: Matched on this exact text, not on category or on MS2 being the quantifier
+#: in play, so a *different* warning — MS2's own "All TPR or FPR values are
+#: zero." included — still reaches the console.
+_MS2_RELIABILITY_FILTER_MESSAGE = r"No cases satisfy \|TPR - FPR\| > 0\.25\."
+
+
 def estimate_or_missing(estimator, bag_scores):
     """The estimate, or ``None`` if this method could not produce one.
 
@@ -559,9 +568,18 @@ def estimate_or_missing(estimator, bag_scores):
 
     Reporting the failure is :func:`run_sweep`'s job, not this one's — see
     :func:`warn_about_missing_runs` for why it cannot happen here.
+
+    The one warning silenced here is MS2's reliability-filter fallback
+    (:data:`_MS2_RELIABILITY_FILTER_MESSAGE`), scoped to this single call via
+    :func:`warnings.catch_warnings` so the filter never outlives it and never
+    reaches ``run_sweep``'s own :class:`MissingRunWarning`, raised elsewhere.
     """
     try:
-        return estimator.estimate(bag_scores)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message=_MS2_RELIABILITY_FILTER_MESSAGE
+            )
+            return estimator.estimate(bag_scores)
     except Exception:
         return None
 

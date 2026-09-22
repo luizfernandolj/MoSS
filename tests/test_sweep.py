@@ -9,11 +9,12 @@ code with different arguments.
 """
 
 import dataclasses
+import warnings
 
 import numpy as np
 import pandas as pd
 import pytest
-from mlquantify.counting import CC
+from mlquantify.counting import CC, MS2
 from mlquantify.matching import DyS
 
 import runs
@@ -27,6 +28,7 @@ from sweep import (
     ReferenceScoreSet,
     collapsed_method_simulator_groups,
     grid,
+    run_bag_size_sweep,
     run_cell,
     run_measure_ablation,
     run_sweep,
@@ -590,6 +592,43 @@ def test_the_number_of_workers_does_not_change_the_runs(smoke_spec):
 
 
 # ---------------------------------------------------------------------------
+# MS2's reliability-filter fallback is silenced, and nothing else is
+# ---------------------------------------------------------------------------
+#
+# MS2 sweeps only the thresholds where |TPR - FPR| > 0.25, falling back to
+# every threshold (plain MS's own set) when none clear that bar. It warns when
+# it does, from inside mlquantify, whenever the reliability filter rejects
+# every candidate — a documented, benign fallback (ADR-0012), not a defect.
+
+
+def test_ms2s_reliability_filter_fallback_raises_no_warning(bag, recwarn):
+    # Both classes score alike, so the reliability filter has nothing to keep:
+    # TPR and FPR are equal at every threshold (score_sets.UNMATCHABLE).
+    unmatchable_reference = ReferenceScoreSet(*scored(400, 0.5, **UNMATCHABLE))
+
+    estimate = sweep.estimate_or_missing(
+        ReferenceEstimator(MS2, unmatchable_reference), bag
+    )
+
+    assert estimate is not None
+    assert len(recwarn) == 0
+
+
+def test_an_unrelated_warning_from_estimate_still_surfaces(bag):
+    class WarningQuantifier:
+        """A base quantifier that warns about something MS2 never would."""
+
+        def aggregate(self, *args, **kwargs):
+            warnings.warn("this warning has nothing to do with MS2")
+            return [0.5, 0.5]
+
+    with pytest.warns(UserWarning, match="this warning has nothing to do with MS2"):
+        estimate = sweep.estimate_or_missing(BaselineEstimator(WarningQuantifier), bag)
+
+    assert estimate == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
 # A failing estimator records a missing run
 # ---------------------------------------------------------------------------
 #
@@ -845,6 +884,73 @@ def test_the_ablation_reuses_run_sweep_s_missing_run_reporting(ablation_spec):
 
 
 # ---------------------------------------------------------------------------
+# The bag-size sweep (#16)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def bag_size_swept_smoke():
+    """The smoke sweep, run once per entry of a small bag-size sequence."""
+    return run_bag_size_sweep(sweep.SMOKE_SWEEP, bag_sizes=(50, 200))
+
+
+def test_running_the_bag_size_sweep_produces_a_frame_the_results_module_recognises(
+    bag_size_swept_smoke, results_root
+):
+    assert tuple(bag_size_swept_smoke.columns) == runs.columns_for(runs.SYNTHETIC)
+    runs.save(bag_size_swept_smoke, runs.SYNTHETIC, root=results_root)
+
+
+def test_the_bag_size_sweep_spans_every_bag_size_it_is_given(bag_size_swept_smoke):
+    assert set(bag_size_swept_smoke["bag_size"]) == {50, 200}
+    assert set(bag_size_swept_smoke.groupby("bag_size").size()) == {
+        len(bag_size_swept_smoke) // 2
+    }
+
+
+def test_the_bag_size_sweep_draws_bags_of_the_size_it_stamps(bag_size_swept_smoke):
+    # A bag of 50 at 0.4 holds exactly 20 positives; one of 200 holds 80 — the
+    # true prevalence agrees with the target either way, so what distinguishes
+    # the two groups is only the size of the bag that produced them.
+    counts = bag_size_swept_smoke.groupby("bag_size")["true_prevalence"].apply(set)
+    assert counts.loc[50] == {0.4}
+    assert counts.loc[200] == {0.4}
+
+
+def test_the_smoke_sweep_spans_all_four_published_bag_sizes():
+    # The acceptance criterion itself: the smoke sweep, run through the
+    # published bag sizes rather than a small fixture sequence.
+    produced = run_bag_size_sweep(sweep.SMOKE_SWEEP)
+
+    assert set(produced["bag_size"]) == set(sweep.BAG_SIZES)
+
+
+def test_the_bag_size_sweep_reuses_run_sweep_s_missing_run_reporting(smoke_spec):
+    spec = plain_only(smoke_spec, {"DyS": FailingQuantifier})
+
+    with pytest.warns(sweep.MissingRunWarning):
+        produced = run_bag_size_sweep(spec, bag_sizes=(50, 200))
+
+    assert produced["estimated_prevalence"].isna().all()
+
+
+def test_the_bag_size_sweep_composes_with_the_measure_ablation(ablation_spec):
+    # sweep.MEASURE_ABLATION_SWEEP runs through this composition in
+    # sweep._main, so the two dimensions have to nest without either losing
+    # its own column.
+    produced = run_bag_size_sweep(
+        ablation_spec,
+        run=run_measure_ablation,
+        kind=runs.MEASURE_ABLATION,
+        bag_sizes=(50, 200),
+    )
+
+    assert tuple(produced.columns) == runs.columns_for(runs.MEASURE_ABLATION)
+    assert set(produced["bag_size"]) == {50, 200}
+    assert set(produced["measure"]) == set(runs.MEASURES)
+
+
+# ---------------------------------------------------------------------------
 # Validating a produced sweep against ADR-0001's two defect signatures (#9)
 # ---------------------------------------------------------------------------
 
@@ -858,6 +964,7 @@ def cell_row(**overrides):
         "reference_merging_factor": 0.5,
         "bag_simulator": runs.UNIFORM,
         "bag_merging_factor": 0.5,
+        "bag_size": 100,
         "target_prevalence": 0.4,
         "true_prevalence": 0.4,
         "estimated_prevalence": 0.37,
