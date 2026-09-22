@@ -562,6 +562,62 @@ def test_missing_runs_survive_the_results_module(smoke_real_data_spec, results_r
 
 
 # ---------------------------------------------------------------------------
+# The bag-size sweep (#16)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def bag_size_swept_real_data():
+    """A small fabricated real-data spec, run once per entry of a bag-size
+    sequence small enough for ``mushroom``'s own fabricated pool to satisfy.
+    """
+    return real_data.run_bag_size_sweep(SMOKE_REAL_DATA_SPEC, bag_sizes=(50, 200))
+
+
+def test_running_the_bag_size_sweep_produces_a_frame_the_results_module_recognises(
+    bag_size_swept_real_data, results_root
+):
+    assert tuple(bag_size_swept_real_data.columns) == runs.columns_for(runs.REAL_DATA)
+    runs.save(bag_size_swept_real_data, runs.REAL_DATA, root=results_root)
+
+
+def test_the_bag_size_sweep_spans_every_bag_size_it_is_given(bag_size_swept_real_data):
+    assert set(bag_size_swept_real_data["bag_size"]) == {50, 200}
+    assert set(bag_size_swept_real_data.groupby("bag_size").size()) == {
+        len(bag_size_swept_real_data) // 2
+    }
+
+
+def test_a_small_fabricated_real_data_spec_spans_all_four_published_bag_sizes():
+    # The acceptance criterion itself. Mushroom's own fabricated pool (400
+    # instances) cannot fill a bag at the larger published sizes, so those
+    # sizes come back as missing runs (ADR-0005) rather than as an exception —
+    # the same shortfall Haberman records at a high prevalence elsewhere in
+    # this file, here forced by the bag size instead of the prevalence.
+    with pytest.warns(sweep.MissingRunWarning):
+        produced = real_data.run_bag_size_sweep(SMOKE_REAL_DATA_SPEC)
+
+    assert set(produced["bag_size"]) == set(sweep.BAG_SIZES)
+
+
+def test_the_bag_size_sweep_reuses_run_sweep_s_missing_run_reporting(
+    smoke_real_data_spec,
+):
+    # Haberman's pool holds 306 instances total, so a bag asked for at either
+    # of these sizes cannot be filled at all — the wrapper's missing-run
+    # reporting has to fire once per size, unchanged from what a single
+    # ``run_sweep`` call already does.
+    cell = real_data.Cell(dataset="haberman_survival", target_prevalence=0.9)
+    spec = dataclasses.replace(smoke_real_data_spec, cells=(cell,))
+
+    with pytest.warns(sweep.MissingRunWarning):
+        produced = real_data.run_bag_size_sweep(spec, bag_sizes=(500, 1000))
+
+    assert produced["estimated_prevalence"].isna().all()
+    assert set(produced["bag_size"]) == {500, 1000}
+
+
+# ---------------------------------------------------------------------------
 # The published spec's shape (ADR-0005)
 # ---------------------------------------------------------------------------
 

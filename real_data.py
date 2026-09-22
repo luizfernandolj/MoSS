@@ -30,6 +30,7 @@ scalars cannot describe a class count :func:`grid` was not built for — so
 :func:`grid` and :func:`build_spec` rather than replacing them.
 """
 
+import dataclasses
 import hashlib
 import sys
 import time
@@ -322,6 +323,7 @@ def run_cell(cell, spec):
                         "base_quantifier": base_quantifier,
                         "method_simulator": method_simulator,
                         "dataset": cell.dataset,
+                        "bag_size": spec.bag_size,
                         "target_prevalence": cell.target_prevalence,
                         "true_prevalence": true_prevalence,
                         "estimated_prevalence": (
@@ -383,6 +385,26 @@ def run_sweep(spec, n_jobs=1, progress=False):
     produced = pd.concat(frames, ignore_index=True) if frames else _frame([])
     sweep.warn_about_missing_runs(produced)
     return produced
+
+
+def run_bag_size_sweep(spec, bag_sizes=sweep.BAG_SIZES, n_jobs=1, progress=False):
+    """Run ``spec`` once per bag size and stack the runs into one frame.
+
+    ``sweep.run_bag_size_sweep`` in every respect but the sweep-running
+    function it reuses: this module's own :func:`run_sweep` rather than
+    ``sweep.run_sweep``, over ``runs.REAL_DATA``'s columns rather than the
+    synthetic table's. ``bag_size`` needs no stamp afterwards, the same
+    reason it needs none there: :func:`run_cell` already records
+    ``spec.bag_size`` on every row it produces.
+    """
+    columns = list(runs.columns_for(runs.REAL_DATA))
+    swept = [
+        run_sweep(dataclasses.replace(spec, bag_size=bag_size), n_jobs=n_jobs, progress=progress)
+        for bag_size in bag_sizes
+    ]
+    if not swept:
+        return pd.DataFrame(columns=columns)
+    return pd.concat(swept, ignore_index=True)[columns]
 
 
 def _frame(rows):
@@ -627,7 +649,7 @@ def _main():
     }
 
     spec_builder = build_multiclass_spec if args.multiclass else build_spec
-    produced = run_sweep(spec_builder(pools, seed=20260911), n_jobs=-1, progress=True)
+    produced = run_bag_size_sweep(spec_builder(pools, seed=20260911), n_jobs=-1, progress=True)
 
     # Not sweep.validate_and_save: its collapse check (sweep.validate_no_
     # collapsed_groups) is calibrated against the synthetic sweep's continuous

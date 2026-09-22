@@ -62,6 +62,15 @@ def test_the_measure_ablation_table_is_the_synthetic_table_plus_measure():
     assert ablation == list(runs.columns_for(runs.SYNTHETIC))
 
 
+@pytest.mark.parametrize("kind", runs.KINDS)
+def test_every_table_records_which_bag_size_produced_it(kind):
+    # #16: every sweep now runs once per bag size (sweep.run_bag_size_sweep,
+    # real_data.run_bag_size_sweep), so every kind of run needs a column to
+    # say which size produced it, not only the synthetic table the other
+    # sweep dimensions gained one on first.
+    assert "bag_size" in runs.columns_for(kind)
+
+
 # ---------------------------------------------------------------------------
 # Storage: Parquet, and its layout invisible to callers
 # ---------------------------------------------------------------------------

@@ -141,6 +141,7 @@ _SYNTHETIC_DATA_COLUMNS = (
     "reference_merging_factor",
     "bag_simulator",
     "bag_merging_factor",
+    "bag_size",
     "target_prevalence",
     "true_prevalence",
     "estimated_prevalence",
@@ -152,6 +153,7 @@ _COLUMNS = {
     REAL_DATA: ESTIMATOR_COLUMNS
     + (
         "dataset",
+        "bag_size",
         "target_prevalence",
         "true_prevalence",
         "estimated_prevalence",

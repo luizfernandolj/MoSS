@@ -535,6 +535,7 @@ def run_cell(cell, spec):
                         "reference_merging_factor": cell.reference_merging_factor,
                         "bag_simulator": cell.bag_simulator,
                         "bag_merging_factor": cell.bag_merging_factor,
+                        "bag_size": spec.bag_size,
                         "target_prevalence": cell.target_prevalence,
                         "true_prevalence": true_prevalence,
                         "estimated_prevalence": estimate_or_missing(
@@ -706,6 +707,11 @@ MERGING_FACTORS = tuple(round(float(m), 2) for m in np.arange(0.05, 1.0, 0.05))
 #: quantifier's error is largest.
 TARGET_PREVALENCES = (0.01, 0.1, 0.2, 0.4, 0.6, 0.8, 0.99)
 
+#: The bag sizes every synthetic-family and real-data sweep runs once each at
+#: (#16), the dimension :func:`run_bag_size_sweep` varies the same way
+#: :func:`run_measure_ablation` varies :data:`runs.MEASURES`.
+BAG_SIZES = (100, 500, 1000, 5000)
+
 # --- The specs -------------------------------------------------------------
 
 #: The published synthetic experiment (CONTEXT.md): both the reference and the
@@ -779,6 +785,35 @@ def run_measure_ablation(spec, measures=runs.MEASURES, n_jobs=1, progress=False)
     if not ablated:
         return pd.DataFrame(columns=columns)
     return pd.concat(ablated, ignore_index=True)[columns]
+
+
+def run_bag_size_sweep(spec, run=run_sweep, bag_sizes=BAG_SIZES, kind=runs.SYNTHETIC, n_jobs=1, progress=False):
+    """Run ``spec`` once per bag size and stack the runs into one frame.
+
+    ``spec`` is a template: its own ``bag_size`` is overridden by each entry of
+    ``bag_sizes`` in turn (:func:`dataclasses.replace`), the same technique
+    :func:`run_measure_ablation` uses for ``measure`` — everything about the
+    sweep but the bag size is held fixed, so a difference between the frames
+    it produces is a difference the bag size made. Unlike ``measure``,
+    ``bag_size`` needs no stamp afterwards: it is a cell-independent spec field
+    ``run_cell`` already records on every row it produces (the bag it draws is
+    always ``spec.bag_size`` wide), so replacing it before the run is enough
+    for the value to come back correct.
+
+    ``run`` defaults to :func:`run_sweep`, but a caller sweeping the distance
+    measure too passes :func:`run_measure_ablation` instead (as
+    :data:`MEASURE_ABLATION_SWEEP` does), so the two dimensions compose rather
+    than each growing its own copy of this loop; ``kind`` then names which of
+    ``runs``' column layouts the result belongs to.
+    """
+    columns = list(runs.columns_for(kind))
+    swept = [
+        run(dataclasses.replace(spec, bag_size=bag_size), n_jobs=n_jobs, progress=progress)
+        for bag_size in bag_sizes
+    ]
+    if not swept:
+        return pd.DataFrame(columns=columns)
+    return pd.concat(swept, ignore_index=True)[columns]
 
 
 #: The distance-measure ablation's grid (#9): every simulator once at three
@@ -1064,12 +1099,16 @@ def _main():
     args = parser.parse_args()
 
     if args.ablation:
-        produced = run_measure_ablation(
-            MEASURE_ABLATION_SWEEP, n_jobs=-1, progress=True
+        produced = run_bag_size_sweep(
+            MEASURE_ABLATION_SWEEP,
+            run=run_measure_ablation,
+            kind=runs.MEASURE_ABLATION,
+            n_jobs=-1,
+            progress=True,
         )
         kind = runs.MEASURE_ABLATION
     else:
-        produced = run_sweep(SYNTHETIC_SWEEP, n_jobs=-1, progress=True)
+        produced = run_bag_size_sweep(SYNTHETIC_SWEEP, n_jobs=-1, progress=True)
         kind = runs.SYNTHETIC
 
     print(validate_and_save(produced, kind))
