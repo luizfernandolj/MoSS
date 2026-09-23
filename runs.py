@@ -156,6 +156,7 @@ _COLUMNS = {
         "bag_size",
         "target_prevalence",
         "true_prevalence",
+        "bag_replication",
         "estimated_prevalence",
         "repetition",
     ),

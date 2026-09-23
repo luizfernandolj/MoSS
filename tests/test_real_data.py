@@ -166,11 +166,7 @@ def test_a_bag_within_the_pool_s_capacity_is_drawn_without_replacement(
     assert indices is not None
     assert len(indices) == 100
     assert len(set(indices)) == 100
-
-
-def test_a_bag_beyond_the_pool_s_capacity_is_missing(haberman_shaped_pool):
-    # 81 minority instances cannot fill 90 of a size-100 bag (ADR-0005).
-    assert real_data.draw_bag(haberman_shaped_pool, 0.9, 100, random_state=1) is None
+    assert real_data.bag_replication(indices) == 0
 
 
 def test_a_bag_at_the_pool_s_exact_capacity_is_drawn():
@@ -179,20 +175,77 @@ def test_a_bag_at_the_pool_s_exact_capacity_is_drawn():
     assert real_data.draw_bag(exact, 0.5, 100, random_state=1) is not None
 
 
-def test_the_published_grid_s_high_prevalences_are_missing_for_haberman(
+# ---------------------------------------------------------------------------
+# Bootstrap replication within the cap (#18): a short class is filled with
+# replacement rather than the draw failing, up to REPLICATION_CAP times its
+# own available count.
+# ---------------------------------------------------------------------------
+
+
+def test_a_class_within_the_replication_cap_is_filled_with_replacement(
     haberman_shaped_pool,
 ):
-    # The exact boundary this shape draws (verified against class_counts):
-    # 80% needs 80 of the minority class and 85% needs 85, so the grid's own
-    # step is what separates the last satisfiable cell from the first missing
-    # one.
+    # 90 minority instances needed from 81 available is beyond plain capacity
+    # but within the 5x cap (405): draw_bag bootstrap-replicates the short
+    # class instead of recording a missing run.
+    indices = real_data.draw_bag(haberman_shaped_pool, 0.9, 100, random_state=1)
+
+    assert indices is not None
+    assert len(indices) == 100
+    assert real_data.bag_replication(indices) > 0
+
+
+def test_a_class_beyond_the_replication_cap_is_still_missing(haberman_shaped_pool):
+    # 81 minority instances, capped at 5x = 405 (real_data.REPLICATION_CAP): a
+    # size-1000 bag at 90% positive needs 900, beyond even the cap.
+    assert real_data.draw_bag(haberman_shaped_pool, 0.9, 1000, random_state=1) is None
+
+
+def test_a_shortfall_on_the_majority_side_is_also_capped(haberman_shaped_pool):
+    # The cap applies per class, not only to the historically-discussed
+    # minority one: 225 majority instances, capped at 5x = 1125, cannot supply
+    # the 4950 a size-5000 bag at 1% positive needs.
+    assert real_data.draw_bag(haberman_shaped_pool, 0.01, 5000, random_state=1) is None
+
+
+def test_a_seeded_bootstrap_draw_is_the_same_bag_twice(haberman_shaped_pool):
+    one = real_data.draw_bag(haberman_shaped_pool, 0.9, 100, random_state=7)
+    another = real_data.draw_bag(haberman_shaped_pool, 0.9, 100, random_state=7)
+
+    np.testing.assert_array_equal(one, another)
+
+
+def test_the_published_grid_s_high_prevalences_are_no_longer_missing_at_bag_size_100(
+    haberman_shaped_pool,
+):
+    # #18: bootstrap replication up to the 5x cap (405 for Haberman's 81
+    # minority instances) comfortably covers every published prevalence at
+    # the smallest bag size — this is the shortfall the test below now shows
+    # moved to larger bag sizes instead.
+    for p in real_data.TARGET_PREVALENCES:
+        assert (
+            real_data.draw_bag(haberman_shaped_pool, p, 100, random_state=1)
+            is not None
+        )
+
+
+@pytest.mark.parametrize("bag_size, threshold", [(500, 0.80), (1000, 0.40)])
+def test_the_published_grid_s_high_prevalences_are_missing_at_larger_bag_sizes(
+    haberman_shaped_pool, bag_size, threshold
+):
+    # The same shortfall the size-100 grid no longer shows (verified against
+    # class_counts, the same way the pre-#18 bag_size=100 boundary was): the
+    # 81 minority instances are capped at 5x = 405, and the share of the bag
+    # that needs more than that shrinks as bag_size grows — from above 80% at
+    # 500 to above 40% at 1000.
     missing = {
         p
         for p in real_data.TARGET_PREVALENCES
-        if real_data.draw_bag(haberman_shaped_pool, p, 100, random_state=1) is None
+        if real_data.draw_bag(haberman_shaped_pool, p, bag_size, random_state=1)
+        is None
     }
 
-    assert missing == {p for p in real_data.TARGET_PREVALENCES if p > 0.80}
+    assert missing == {p for p in real_data.TARGET_PREVALENCES if p > threshold}
 
 
 def test_a_seeded_draw_is_the_same_bag_twice(haberman_shaped_pool):
@@ -348,6 +401,36 @@ def test_a_run_records_the_dataset_and_target_prevalence_of_its_cell(mushroom_ce
     assert set(mushroom_cell["target_prevalence"]) == {0.4}
 
 
+def test_a_cell_satisfiable_without_bootstrapping_records_no_replication(
+    mushroom_cell,
+):
+    # Mushroom's fabricated pool (400 instances, balanced) can fill this
+    # cell's bag without replacement, so every one of its runs says so (#18).
+    assert (mushroom_cell["bag_replication"] == 0).all()
+
+
+def test_a_cell_that_relies_on_replication_flags_every_run(smoke_real_data_spec):
+    # 90 minority instances needed from 81 available is within the 5x cap
+    # (#18), so this cell's bag is filled by bootstrap replication rather
+    # than recorded missing, and every run drawn from it says so.
+    cell = real_data.Cell(dataset="haberman_survival", target_prevalence=0.9)
+    spec = dataclasses.replace(smoke_real_data_spec, cells=(cell,))
+
+    produced = real_data.run_cell(spec.cells[0], spec)
+
+    assert (produced["bag_replication"] > 0).all()
+    assert produced["estimated_prevalence"].notna().all()
+
+
+def test_a_missing_cell_records_no_replication_either(smoke_real_data_spec):
+    cell = real_data.Cell(dataset="haberman_survival", target_prevalence=0.9)
+    spec = dataclasses.replace(smoke_real_data_spec, cells=(cell,), bag_size=1000)
+
+    produced = real_data.run_cell(spec.cells[0], spec)
+
+    assert produced["bag_replication"].isna().all()
+
+
 # ---------------------------------------------------------------------------
 # A multiclass cell: the same pipeline, a vector prevalence throughout (#14)
 # ---------------------------------------------------------------------------
@@ -406,11 +489,12 @@ def test_a_multiclass_run_s_estimate_is_a_prevalence_vector(multiclass_cell):
 
 
 def test_an_unsatisfiable_cell_records_every_method_as_missing(smoke_real_data_spec):
-    # ADR-0005 exactly: Haberman cannot fill a size-100 bag at 90% positive, so
-    # the absence is recorded for every method rather than the cell being
-    # skipped.
+    # ADR-0005, extended by #18: beyond the replication cap (405 of Haberman's
+    # 81 minority instances), a size-1000 bag at 90% positive still cannot be
+    # filled, so the absence is recorded for every method rather than the cell
+    # being skipped.
     cell = real_data.Cell(dataset="haberman_survival", target_prevalence=0.9)
-    spec = dataclasses.replace(smoke_real_data_spec, cells=(cell,))
+    spec = dataclasses.replace(smoke_real_data_spec, cells=(cell,), bag_size=1000)
 
     with pytest.warns(sweep.MissingRunWarning):
         produced = real_data.run_sweep(spec)
@@ -425,6 +509,7 @@ def test_an_unsatisfiable_cell_records_every_method_as_missing(smoke_real_data_s
     assert set(zip(produced["base_quantifier"], produced["method_simulator"])) == expected
     assert produced["estimated_prevalence"].isna().all()
     assert produced["true_prevalence"].isna().all()
+    assert produced["bag_replication"].isna().all()
     assert len(produced) == len(expected) * spec.repetitions
 
 
@@ -432,10 +517,13 @@ def test_missing_runs_are_reported_per_dataset(smoke_real_data_spec):
     # ADR-0005: a dataset's shortfall is missing for every method alike, not
     # for whichever one happened to fail, so the per-dataset breakdown should
     # carry the same count `run_sweep`'s own missing total does for Haberman
-    # and say nothing at all about mushroom, which this cell can satisfy.
+    # and say nothing at all about mushroom, which this cell can satisfy (even
+    # at the larger bag size the unsatisfiable cell needs to still miss, #18).
     unsatisfiable = real_data.Cell(dataset="haberman_survival", target_prevalence=0.9)
     satisfiable = real_data.Cell(dataset="mushroom", target_prevalence=0.4)
-    spec = dataclasses.replace(smoke_real_data_spec, cells=(unsatisfiable, satisfiable))
+    spec = dataclasses.replace(
+        smoke_real_data_spec, cells=(unsatisfiable, satisfiable), bag_size=1000
+    )
 
     with pytest.warns(sweep.MissingRunWarning):
         produced = real_data.run_sweep(spec)
@@ -550,7 +638,7 @@ def test_a_sweep_is_written_through_the_results_module(
 
 def test_missing_runs_survive_the_results_module(smoke_real_data_spec, results_root):
     cell = real_data.Cell(dataset="haberman_survival", target_prevalence=0.9)
-    spec = dataclasses.replace(smoke_real_data_spec, cells=(cell,))
+    spec = dataclasses.replace(smoke_real_data_spec, cells=(cell,), bag_size=1000)
 
     with pytest.warns(sweep.MissingRunWarning):
         produced = real_data.run_sweep(spec)
@@ -559,6 +647,7 @@ def test_missing_runs_survive_the_results_module(smoke_real_data_spec, results_r
     labelled = runs.load_labelled(runs.REAL_DATA, root=results_root)
     assert labelled["estimated_prevalence"].isna().all()
     assert labelled["absolute_error"].isna().all()
+    assert labelled["bag_replication"].isna().all()
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +730,50 @@ def test_the_published_spec_covers_every_prevalence_for_every_pool_it_is_given()
     spec = real_data.build_spec(pools, seed=1)
 
     assert len(spec.cells) == len(pools) * len(real_data.TARGET_PREVALENCES)
+
+
+# ---------------------------------------------------------------------------
+# The class floor (#18): a pool too small even for bootstrap replication to
+# help is dropped from the grid entirely, not run for almost nothing but
+# missing runs.
+# ---------------------------------------------------------------------------
+
+
+def test_a_pool_below_the_class_floor_never_appears_in_the_built_binary_grid():
+    pools = {
+        "big_enough": pool("big_enough", 200, 0.5),  # 100 of each class
+        "too_small": pool("too_small", 40, 0.5),  # 20 of each class
+    }
+
+    spec = real_data.build_spec(pools, seed=1)
+
+    assert {cell.dataset for cell in spec.cells} == {"big_enough"}
+    assert set(spec.pools) == {"big_enough"}
+
+
+def test_the_class_floor_s_exact_boundary():
+    # 1000 * 0.03 == 30, exactly at MIN_CLASS_SIZE; 1000 * 0.029 == 29, one
+    # under it.
+    pools = {
+        "at_floor": pool("at_floor", 1000, 0.03),
+        "under_floor": pool("under_floor", 1000, 0.029),
+    }
+
+    spec = real_data.build_spec(pools, seed=1)
+
+    assert {cell.dataset for cell in spec.cells} == {"at_floor"}
+
+
+def test_a_pool_below_the_class_floor_never_appears_in_the_built_multiclass_grid():
+    pools = {
+        "big_enough": multiclass_pool("big_enough", 900, [1 / 3, 1 / 3, 1 / 3]),
+        "too_small": multiclass_pool("too_small", 1000, [0.02, 0.49, 0.49]),
+    }
+
+    spec = real_data.build_multiclass_spec(pools, seed=1)
+
+    assert {cell.dataset for cell in spec.cells} == {"big_enough"}
+    assert set(spec.pools) == {"big_enough"}
 
 
 # ---------------------------------------------------------------------------

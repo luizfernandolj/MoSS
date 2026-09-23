@@ -71,6 +71,15 @@ def test_every_table_records_which_bag_size_produced_it(kind):
     assert "bag_size" in runs.columns_for(kind)
 
 
+def test_only_the_real_data_table_records_how_much_a_bag_relied_on_replication():
+    # #18: only a real-data bag can run short of instances to draw — a
+    # synthetic or measure-ablation bag comes from a simulator that can always
+    # draw more, so replication means nothing there.
+    assert "bag_replication" in runs.columns_for(runs.REAL_DATA)
+    assert "bag_replication" not in runs.columns_for(runs.SYNTHETIC)
+    assert "bag_replication" not in runs.columns_for(runs.MEASURE_ABLATION)
+
+
 # ---------------------------------------------------------------------------
 # Storage: Parquet, and its layout invisible to callers
 # ---------------------------------------------------------------------------
