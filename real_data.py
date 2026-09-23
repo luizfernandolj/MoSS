@@ -621,6 +621,15 @@ def _meets_class_floor(pool):
     return np.unique(pool.labels, return_counts=True)[1].min() >= MIN_CLASS_SIZE
 
 
+def _above_class_floor(pools):
+    """``pools``, with any pool under :data:`MIN_CLASS_SIZE` dropped (#18).
+
+    Shared by :func:`build_spec` and :func:`build_multiclass_spec` so the
+    floor is spelled once rather than copied into each.
+    """
+    return {name: pool for name, pool in pools.items() if _meets_class_floor(pool)}
+
+
 def build_spec(pools, *, seed=None, measure=None):
     """The published real-data spec (ADR-0005) over these pools.
 
@@ -632,7 +641,7 @@ def build_spec(pools, *, seed=None, measure=None):
     :data:`MIN_CLASS_SIZE` is dropped before the grid is built rather than
     handed a cell of its own (#18).
     """
-    pools = {name: pool for name, pool in pools.items() if _meets_class_floor(pool)}
+    pools = _above_class_floor(pools)
     return RealDataSpec(
         cells=grid(tuple(pools), TARGET_PREVALENCES),
         pools=pools,
@@ -656,7 +665,7 @@ def build_multiclass_spec(pools, *, seed=None, measure=None, n_prevalences=N_MUL
     sequence shared across datasets. Subject to the same class floor
     (:data:`MIN_CLASS_SIZE`, #18) as :func:`build_spec`.
     """
-    pools = {name: pool for name, pool in pools.items() if _meets_class_floor(pool)}
+    pools = _above_class_floor(pools)
     return RealDataSpec(
         cells=multiclass_grid(pools, n_prevalences, random_state=seed),
         pools=pools,
