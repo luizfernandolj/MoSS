@@ -83,11 +83,15 @@ def plot_rankings_by_bag_size(rankings):
     Draws exactly what each ranking's own ``nemenyi`` result decided
     (:func:`statistical_report.critical_difference_diagram`) — grouping
     methods into cliques is that function's job, not this one's, the same
-    reasoning it already states for the single-ranking report.
+    reasoning it already states for the single-ranking report. The bag size
+    is prepended to the title afterwards: the diagram's own title names only
+    the critical difference and the dataset count, and a reader comparing
+    diagrams side by side needs the one thing that tells them apart.
     """
     written = []
     for ranking in rankings:
         ax = statistical_report.critical_difference_diagram(ranking.nemenyi)
+        ax.set_title(f"Bag size = {ranking.bag_size} — {ax.get_title()}")
         fig = ax.figure
         png_path, pdf_path = cd_diagram_paths(ranking.bag_size)
         fig.savefig(png_path, dpi=200, bbox_inches="tight")

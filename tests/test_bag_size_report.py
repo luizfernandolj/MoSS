@@ -110,6 +110,23 @@ def _three_method_rows(dataset, bag_size, errors):
     ]
 
 
+def test_rankings_by_bag_size_does_not_filter_replicated_rows():
+    # #18 flags a run whose bag used bootstrap replication; this function
+    # takes every row it is handed, replicated or not, rather than dropping
+    # any of them by default — the same property asserted for
+    # mae_by_bag_size above.
+    rows = []
+    for dataset in ("d1", "d2", "d3"):
+        rows += _three_method_rows(dataset, 100, (0.1, 0.2, 0.3))
+    labelled = _frame(rows)
+    labelled["bag_replicated"] = [True, False, False] * 3
+
+    rankings = bag_size_report.rankings_by_bag_size(labelled)
+
+    assert len(rankings) == 1
+    assert rankings[0].friedman.n_datasets == 3
+
+
 def test_rankings_by_bag_size_returns_one_ranking_per_bag_size_ordered_ascending():
     rows = []
     for dataset in ("d1", "d2", "d3"):

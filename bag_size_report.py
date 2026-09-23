@@ -1,7 +1,7 @@
 """How bag size affects estimation error, shaped for a figure rather than eyeballed from a raw table (#19).
 
-Two questions, two functions, the same split CONTEXT.md's "MAE trend" and
-"per-bag-size rankings" already name. :func:`mae_by_bag_size` answers "does
+Two questions, two functions, the same split #19's own title draws between
+"MAE trend" and "per-bag-size rankings". :func:`mae_by_bag_size` answers "does
 error trend down as bags grow" at the altitude a reader compares datasets at —
 one number per (dataset, bag_size), methods and repetitions averaged away.
 :func:`rankings_by_bag_size` answers the question that average cannot: "does
@@ -32,6 +32,9 @@ import stats
 #: methods on purpose, since separating them is :func:`rankings_by_bag_size`'s
 #: job, not this one's.
 _MAE_GROUP_COLUMNS = ("dataset", "bag_size")
+
+#: The column :func:`rankings_by_bag_size` splits its ranking on.
+_BAG_SIZE_COLUMN = "bag_size"
 
 
 def mae_by_bag_size(labelled_runs):
@@ -83,5 +86,5 @@ def rankings_by_bag_size(labelled_runs, alpha=0.05):
             friedman=stats.friedman(group),
             nemenyi=stats.nemenyi(group, alpha=alpha),
         )
-        for bag_size, group in labelled_runs.groupby("bag_size", observed=True)
+        for bag_size, group in labelled_runs.groupby(_BAG_SIZE_COLUMN, observed=True)
     )

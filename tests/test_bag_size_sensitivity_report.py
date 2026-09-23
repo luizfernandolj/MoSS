@@ -109,6 +109,35 @@ def _nemenyi_result(methods_and_ranks):
     )
 
 
+def test_plot_rankings_by_bag_size_prefixes_the_diagram_title_with_its_bag_size(
+    monkeypatch, tmp_path
+):
+    # A diagram's own title (statistical_report.critical_difference_diagram)
+    # names only the critical difference and dataset count — nothing that
+    # tells two bag sizes' diagrams apart once saved to separate files.
+    monkeypatch.setattr(report, "OUTPUT_CD_DIAGRAM_PNG_TEMPLATE", str(tmp_path / "cd_{bag_size}.png"))
+    monkeypatch.setattr(report, "OUTPUT_CD_DIAGRAM_PDF_TEMPLATE", str(tmp_path / "cd_{bag_size}.pdf"))
+
+    captured_titles = []
+    real_close = report.plt.close
+
+    def spy_close(fig):
+        captured_titles.append(fig.axes[0].get_title())
+        real_close(fig)
+
+    monkeypatch.setattr(report.plt, "close", spy_close)
+
+    rankings = [
+        report.bag_size_report.BagSizeRanking(
+            bag_size=500, friedman=None, nemenyi=_nemenyi_result({"A": 1.0, "B": 2.0})
+        ),
+    ]
+
+    report.plot_rankings_by_bag_size(rankings)
+
+    assert captured_titles[0].startswith("Bag size = 500")
+
+
 def test_plot_rankings_by_bag_size_writes_one_png_and_pdf_per_bag_size(monkeypatch, tmp_path):
     monkeypatch.setattr(report, "OUTPUT_CD_DIAGRAM_PNG_TEMPLATE", str(tmp_path / "cd_{bag_size}.png"))
     monkeypatch.setattr(report, "OUTPUT_CD_DIAGRAM_PDF_TEMPLATE", str(tmp_path / "cd_{bag_size}.pdf"))
