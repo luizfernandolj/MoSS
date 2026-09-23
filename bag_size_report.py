@@ -63,11 +63,43 @@ class BagSizeRanking:
     own docstring), and a reader asking whether bag size shifts a ranking
     needs that license restated at every bag size, not only at the one where
     the whole table was pooled.
+
+    ``dropped_datasets`` names whichever datasets this bag size's ranking
+    left out (empty for the ordinary case) — see
+    :func:`_datasets_with_no_valid_estimate` for why a dataset is ever
+    dropped rather than every ranking failing outright.
     """
 
     bag_size: int
     friedman: stats.FriedmanResult
     nemenyi: stats.NemenyiResult
+    dropped_datasets: tuple = ()
+
+
+def _datasets_with_no_valid_estimate(group):
+    """Which of ``group``'s datasets have not one valid estimate to average (#20).
+
+    Distinct from a dataset that is merely missing *some* estimates (#18's
+    ordinary case, left to average over whatever it has): the published run
+    surfaced datasets whose pool is too small to fill a bag at all at
+    bag_size=5000, even with #18's bootstrap-replication cap — every method's
+    estimate is missing for that dataset, every repetition, every prevalence.
+    ``stats.friedman``'s per-method check would call that "method X has no
+    valid estimate", which is the wrong diagnosis: nothing is wrong with the
+    method, the dataset itself has nothing to score at this bag size.
+
+    A dataset counts as valid the moment *any* method has an estimate on it,
+    rather than checking each method separately: ``real_data.run_cell`` draws
+    one bag per repetition and shares it across every method, so a bag-draw
+    failure blanks every method's row for that cell at once, and there is no
+    path today to one method going dark on a dataset while its others stay
+    scored. A future failure mode that broke one method alone across a whole
+    dataset would slip past this check and still raise inside ``stats.py`` —
+    correctly, since that would be an actual method defect rather than a
+    dataset with nothing to score.
+    """
+    with_estimate = set(group.dropna(subset=["absolute_error"])["dataset"].unique())
+    return tuple(sorted(set(group["dataset"].unique()) - with_estimate))
 
 
 def rankings_by_bag_size(labelled_runs, alpha=0.05):
@@ -79,12 +111,23 @@ def rankings_by_bag_size(labelled_runs, alpha=0.05):
     bag_size 100 and bag_size 5000 as two independent observations of the same
     thing, which is exactly the shift this report exists to detect rather than
     average away.
+
+    A dataset with nothing to contribute at this bag size
+    (:func:`_datasets_with_no_valid_estimate`) is dropped before either test
+    runs, rather than failing the whole bag size's ranking over the one
+    dataset that has nothing to say at that size.
     """
-    return tuple(
-        BagSizeRanking(
-            bag_size=int(bag_size),
-            friedman=stats.friedman(group),
-            nemenyi=stats.nemenyi(group, alpha=alpha),
+    rankings = []
+    for bag_size, group in labelled_runs.groupby(_BAG_SIZE_COLUMN, observed=True):
+        dropped = _datasets_with_no_valid_estimate(group)
+        if dropped:
+            group = group[~group["dataset"].isin(dropped)]
+        rankings.append(
+            BagSizeRanking(
+                bag_size=int(bag_size),
+                friedman=stats.friedman(group),
+                nemenyi=stats.nemenyi(group, alpha=alpha),
+                dropped_datasets=dropped,
+            )
         )
-        for bag_size, group in labelled_runs.groupby(_BAG_SIZE_COLUMN, observed=True)
-    )
+    return tuple(rankings)

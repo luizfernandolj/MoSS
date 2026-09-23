@@ -102,11 +102,24 @@ def plot_rankings_by_bag_size(rankings):
 
 
 def report(labelled_runs):
-    """Shape and draw both bag-size sensitivity figures from one already-loaded table."""
+    """Shape and draw both bag-size sensitivity figures from one already-loaded table.
+
+    Also prints which dataset, if any, a bag size's ranking dropped
+    (``bag_size_report.rankings_by_bag_size``, #20) — a dataset with nothing
+    to score at that bag size is left out of its ranking rather than failing
+    it outright, and a reader running this script needs to see that rather
+    than have it happen silently.
+    """
     mae_table = bag_size_report.mae_by_bag_size(labelled_runs)
     plot_mae_by_bag_size(mae_table)
 
     rankings = bag_size_report.rankings_by_bag_size(labelled_runs)
+    for ranking in rankings:
+        if ranking.dropped_datasets:
+            print(
+                f"bag_size={ranking.bag_size}: dropped {list(ranking.dropped_datasets)} "
+                "from the ranking (no valid estimate at this bag size)"
+            )
     plot_rankings_by_bag_size(rankings)
 
     return mae_table, rankings
