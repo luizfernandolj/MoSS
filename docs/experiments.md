@@ -85,7 +85,10 @@ for one dataset) — see [running.md](running.md).
 - **Pool cap**: ~50,000 instances per dataset
 - **Target prevalences**: 21 values bracketing [0, 1] (0.01, then 19 evenly
   spaced points from `linspace(0, 1, 21)`, then 0.99)
-- **Bag size**: 100
+- **Bag size**: 100, 500, 1000, 5000 (`sweep.BAG_SIZES`, swept via
+  `real_data.run_bag_size_sweep`, #16) — the published figures in
+  [results.md](results.md) other than the bag-size sensitivity ones are the
+  bag_size=100 slice alone
 - **Repetitions**: 10
 - **Seed**: 20260911 (as invoked from `real_data.py`'s `_main`)
 - **Base quantifiers / method simulators**: the same registries as the
@@ -94,7 +97,10 @@ for one dataset) — see [running.md](running.md).
 A cell a dataset's pool cannot supply — e.g. Haberman has 81 minority
 instances and cannot fill a size-100 bag above 80% positive — is recorded
 as an explicit missing run rather than skipped or padded
-([ADR-0005](adr/0005-real-data-experiment-design.md)).
+([ADR-0005](adr/0005-real-data-experiment-design.md)). At the larger bag
+sizes this can consume a whole dataset rather than one cell: neither
+Haberman nor Pima Diabetes can fill a bag of 5000 at all, even with #18's
+bootstrap-replication cap (see [results.md](results.md#bag-size-sensitivity)).
 
 ## Real-data, multiclass
 
