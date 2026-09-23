@@ -171,6 +171,33 @@ def test_plot_rankings_by_bag_size_writes_one_png_and_pdf_per_bag_size(monkeypat
 # ---------------------------------------------------------------------------
 
 
+def test_report_prints_which_datasets_a_bag_size_s_ranking_dropped(monkeypatch, capsys):
+    # rankings_by_bag_size (#20) drops a dataset with nothing to score at a
+    # given bag size rather than failing the ranking outright; a reader
+    # running this script needs to see that, not have it happen silently.
+    monkeypatch.setattr(report, "plot_mae_by_bag_size", lambda *a, **k: None)
+    monkeypatch.setattr(report, "plot_rankings_by_bag_size", lambda rankings: [])
+    monkeypatch.setattr(
+        report.bag_size_report,
+        "rankings_by_bag_size",
+        lambda labelled_runs: (
+            report.bag_size_report.BagSizeRanking(
+                bag_size=5000, friedman=None, nemenyi=None, dropped_datasets=("haberman",)
+            ),
+            report.bag_size_report.BagSizeRanking(
+                bag_size=100, friedman=None, nemenyi=None, dropped_datasets=()
+            ),
+        ),
+    )
+
+    report.report(pd.DataFrame({"dataset": ["d1"], "bag_size": [100], "absolute_error": [0.1]}))
+
+    printed = capsys.readouterr().out
+    assert "bag_size=5000" in printed
+    assert "haberman" in printed
+    assert "bag_size=100" not in printed
+
+
 def test_report_shapes_with_bag_size_report_and_draws_both_figures(monkeypatch, tmp_path):
     labelled_runs = pd.DataFrame(
         [

@@ -158,6 +158,71 @@ def test_rankings_by_bag_size_computes_each_bag_size_s_ranking_independently():
     assert by_bag_size[5000].friedman.n_datasets == 4
 
 
+def test_rankings_by_bag_size_drops_a_dataset_with_no_valid_estimate_at_that_bag_size():
+    # The published run surfaced this for real (#20): pima_diabetes and
+    # haberman_survival go entirely dark at bag_size=5000 because their pools
+    # are too small to fill a bag that big even with #18's bootstrap-
+    # replication cap, so every method's estimate is missing for that dataset
+    # alone. A ranking over the datasets that do have something to say should
+    # still be produced rather than failing outright over the one that doesn't.
+    rows = []
+    for dataset in ("d1", "d2", "d3"):
+        rows += _three_method_rows(dataset, 5000, (0.1, 0.2, 0.3))
+    rows += [
+        _row(dataset="dark", bag_size=5000, method=method, absolute_error=None)
+        for method in ("A", "B", "C")
+    ]
+    labelled = _frame(rows)
+
+    rankings = bag_size_report.rankings_by_bag_size(labelled)
+
+    assert len(rankings) == 1
+    assert rankings[0].dropped_datasets == ("dark",)
+    assert rankings[0].friedman.n_datasets == 3
+
+
+def test_rankings_by_bag_size_keeps_a_dataset_with_only_partial_missingness():
+    # A dataset whose bag draw fails for some cells but not all (#18's
+    # ordinary case) still leaves every method something to average, and
+    # should not be dropped the way a fully-dark dataset is.
+    rows = []
+    for dataset in ("d1", "d2", "d3"):
+        rows += _three_method_rows(dataset, 100, (0.1, 0.2, 0.3))
+    rows += [
+        _row(dataset="d3", bag_size=100, method=method, absolute_error=None)
+        for method in ("A", "B", "C")
+    ]
+    labelled = _frame(rows)
+
+    rankings = bag_size_report.rankings_by_bag_size(labelled)
+
+    assert rankings[0].dropped_datasets == ()
+    assert rankings[0].friedman.n_datasets == 3
+
+
+def test_rankings_by_bag_size_drops_independently_per_bag_size():
+    # "dark" only fails to draw at all at bag_size=5000, not at bag_size=100
+    # — the drop must not leak from one bag size's ranking into another's.
+    rows = []
+    for bag_size in (100, 5000):
+        for dataset in ("d1", "d2", "d3"):
+            rows += _three_method_rows(dataset, bag_size, (0.1, 0.2, 0.3))
+    rows += _three_method_rows("dark", 100, (0.1, 0.2, 0.3))
+    rows += [
+        _row(dataset="dark", bag_size=5000, method=method, absolute_error=None)
+        for method in ("A", "B", "C")
+    ]
+    labelled = _frame(rows)
+
+    rankings = bag_size_report.rankings_by_bag_size(labelled)
+    by_bag_size = {ranking.bag_size: ranking for ranking in rankings}
+
+    assert by_bag_size[100].dropped_datasets == ()
+    assert by_bag_size[100].friedman.n_datasets == 4
+    assert by_bag_size[5000].dropped_datasets == ("dark",)
+    assert by_bag_size[5000].friedman.n_datasets == 3
+
+
 def test_rankings_by_bag_size_reaches_stats_with_only_that_bag_size_s_rows(monkeypatch):
     labelled = _frame(
         [
