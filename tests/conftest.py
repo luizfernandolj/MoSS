@@ -76,6 +76,7 @@ def real_data_runs():
                 "bag_size": 100,
                 "target_prevalence": 0.4,
                 "true_prevalence": 0.42,
+                "bag_replication": 0,
                 "estimated_prevalence": 0.42 + 0.001 * i,
                 "repetition": 1,
             }

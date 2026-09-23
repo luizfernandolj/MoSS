@@ -15,11 +15,18 @@ reference score set every method matches a bag against: out-of-fold rather
 than refit, so the reference is never the classifier's own training scores
 (ADR-0005).
 
-Bags are drawn under the artificial-prevalence protocol, without replacement,
-class by class. That is what lets a cell fail explicitly: Haberman has 81
-minority instances, so no bag at or above 82% positive can be filled from it,
-and :func:`draw_bag` says so with ``None`` rather than padding the shortfall
-with a repeated instance.
+Bags are drawn under the artificial-prevalence protocol, class by class,
+without replacement first — the same reason as ever: sampling with
+replacement from the start would let every prevalence be reached from any
+pool, however small, which would hide a shortfall rather than report it. A
+class that falls short is bootstrap-replicated instead, but only up to
+:data:`REPLICATION_CAP` times its own available count (#18): a modestly
+undersized pool still speaks, each real instance standing in for itself a
+handful of times, while a pool asked to speak far past what it holds still
+fails explicitly. Haberman has 81 minority instances, so a bag of 100 at 90%
+positive is filled by replication (90 is under the 405-instance cap) while one
+of 1000 at the same prevalence is not (900 is over it), and :func:`draw_bag`
+says so with ``None`` rather than padding the shortfall past the cap.
 
 Everything above is binary-or-multiclass alike (#14): a pool, a bag and a
 cell are the same shapes either way, and the estimator adapters decompose
@@ -78,16 +85,28 @@ class Pool:
         return sweep.ReferenceScoreSet(self.scores, self.labels)
 
 
+#: How many times a short class may be bootstrap-replicated past its own
+#: available count before :func:`draw_bag` gives up and returns ``None``
+#: (#18). Five, so a shortfall the pool can plausibly still speak to — each
+#: real instance standing in for itself a handful of times — is filled,
+#: while a shortfall that would have every instance stand in for dozens of
+#: repeats is refused the same way an entirely absent pool is.
+REPLICATION_CAP = 5
+
+
 def draw_bag(pool, target_prevalence, bag_size, random_state):
     """The indices of one bag drawn from ``pool``, or ``None`` if it cannot be.
 
-    Drawn without replacement, class by class, at the counts
-    :func:`utils.simulators.class_counts` divides ``bag_size`` into. Sampling
-    with replacement instead would let every prevalence be reached from any
-    pool, however small — which would hide the shortfall ADR-0005 records
-    rather than report it: a bag that reused the same instance forty times to
-    reach a prevalence Haberman's 81 minority instances cannot support is not
-    the same measurement as one that used forty distinct patients.
+    Drawn class by class, at the counts
+    :func:`utils.simulators.class_counts` divides ``bag_size`` into. Every
+    class is sampled without replacement first — the ordinary case, and the
+    only one before #18. A class whose available count falls short of what it
+    needs is bootstrap-replicated instead: sampled with replacement, but only
+    up to :data:`REPLICATION_CAP` times its own available count. Beyond that
+    cap, the draw is refused entirely and every class's work is thrown away —
+    an unbounded cap would let every prevalence be reached from any pool,
+    however small, which would hide a shortfall ADR-0005 records rather than
+    report it.
     """
     classes = pool.classes
     counts = class_counts(bag_size, as_prevalence(target_prevalence))
@@ -100,13 +119,30 @@ def draw_bag(pool, target_prevalence, bag_size, random_state):
     drawn = []
     for cls, count in zip(classes, counts):
         available = np.flatnonzero(pool.labels == cls)
-        if len(available) < count:
+        if count <= len(available):
+            drawn.append(rng.choice(available, size=count, replace=False))
+        elif count <= REPLICATION_CAP * len(available):
+            drawn.append(rng.choice(available, size=count, replace=True))
+        else:
             return None
-        drawn.append(rng.choice(available, size=count, replace=False))
 
     indices = np.concatenate(drawn)
     rng.shuffle(indices)
     return indices
+
+
+def bag_replication(indices):
+    """How many of a drawn bag's instances repeat one already in it.
+
+    Zero whenever every class was filled without replacement — the ordinary
+    case :func:`draw_bag` still tries first. Positive only for a bag that
+    bootstrap-replicated a short class within :data:`REPLICATION_CAP`:
+    sampling more instances than a class has available, with replacement,
+    guarantees at least one repeat by the pigeonhole principle, and a pool's
+    classes never share a row, so counting repeats across the whole bag is
+    exactly counting them within whichever class was replicated.
+    """
+    return int(len(indices) - len(np.unique(indices)))
 
 
 # --- The grid ------------------------------------------------------------
@@ -305,9 +341,11 @@ def run_cell(cell, spec):
         if bag_indices is None:
             bag_scores = None
             true_prevalence = None
+            replication = None
         else:
             bag_scores = pool.scores[bag_indices]
             true_prevalence = sweep.observed_prevalence(pool.labels[bag_indices])
+            replication = bag_replication(bag_indices)
 
         for method_simulator in spec.method_simulators:
             for base_quantifier in spec.base_quantifiers:
@@ -325,6 +363,7 @@ def run_cell(cell, spec):
                         "bag_size": spec.bag_size,
                         "target_prevalence": cell.target_prevalence,
                         "true_prevalence": true_prevalence,
+                        "bag_replication": replication,
                         "estimated_prevalence": (
                             None
                             if bag_scores is None
@@ -569,6 +608,27 @@ TARGET_PREVALENCES = (
     + (0.99,)
 )
 
+#: The fewest instances a pool's smallest class may hold and still enter the
+#: grid a published spec builds (#18). Below this, bootstrap replication
+#: (:data:`REPLICATION_CAP`) still cannot cover most of the grid, and running
+#: the dataset anyway returns almost nothing but missing runs — Yeast's own
+#: smallest class today.
+MIN_CLASS_SIZE = 30
+
+
+def _meets_class_floor(pool):
+    """Whether every class in ``pool`` clears :data:`MIN_CLASS_SIZE`."""
+    return np.unique(pool.labels, return_counts=True)[1].min() >= MIN_CLASS_SIZE
+
+
+def _above_class_floor(pools):
+    """``pools``, with any pool under :data:`MIN_CLASS_SIZE` dropped (#18).
+
+    Shared by :func:`build_spec` and :func:`build_multiclass_spec` so the
+    floor is spelled once rather than copied into each.
+    """
+    return {name: pool for name, pool in pools.items() if _meets_class_floor(pool)}
+
 
 def build_spec(pools, *, seed=None, measure=None):
     """The published real-data spec (ADR-0005) over these pools.
@@ -577,8 +637,11 @@ def build_spec(pools, *, seed=None, measure=None):
     reaches the network and trains a classifier per dataset, which nothing at
     import time should pay for. A caller who only wants one dataset passes a
     ``pools`` of one — the grid is built from whatever it is given, the same
-    way ``sweep.grid`` is.
+    way ``sweep.grid`` is. A pool whose smallest class falls under
+    :data:`MIN_CLASS_SIZE` is dropped before the grid is built rather than
+    handed a cell of its own (#18).
     """
+    pools = _above_class_floor(pools)
     return RealDataSpec(
         cells=grid(tuple(pools), TARGET_PREVALENCES),
         pools=pools,
@@ -599,8 +662,10 @@ def build_multiclass_spec(pools, *, seed=None, measure=None, n_prevalences=N_MUL
     means the same thing whether the dataset behind it is binary or
     multiclass — differing only in how the grid is built: each pool's own
     prevalence vectors (:func:`multiclass_grid`) rather than one prevalence
-    sequence shared across datasets.
+    sequence shared across datasets. Subject to the same class floor
+    (:data:`MIN_CLASS_SIZE`, #18) as :func:`build_spec`.
     """
+    pools = _above_class_floor(pools)
     return RealDataSpec(
         cells=multiclass_grid(pools, n_prevalences, random_state=seed),
         pools=pools,
