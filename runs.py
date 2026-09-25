@@ -252,6 +252,17 @@ def load(kind, root=ROOT, columns=None):
     return _restore_scalars(pd.read_parquet(path, columns=columns))
 
 
+def available(kind, root=ROOT):
+    """Whether a table of this kind has already been produced, without reading it.
+
+    For a caller — the dashboard, so far — that wants to skip a whole section
+    when a table is missing rather than let :func:`load`'s
+    ``FileNotFoundError`` surface as a crash.
+    """
+    columns_for(kind)  # rejects an unknown kind before touching the disk
+    return (Path(root) / _FILES[kind]).exists()
+
+
 def _make_storable(runs):
     """``runs``, with any column holding a multiclass vector safe to write.
 
