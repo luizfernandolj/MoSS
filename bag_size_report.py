@@ -66,7 +66,7 @@ class BagSizeRanking:
 
     ``dropped_datasets`` names whichever datasets this bag size's ranking
     left out (empty for the ordinary case) — see
-    :func:`_datasets_with_no_valid_estimate` for why a dataset is ever
+    :func:`datasets_with_no_valid_estimate` for why a dataset is ever
     dropped rather than every ranking failing outright.
     """
 
@@ -76,7 +76,7 @@ class BagSizeRanking:
     dropped_datasets: tuple = ()
 
 
-def _datasets_with_no_valid_estimate(group):
+def datasets_with_no_valid_estimate(group):
     """Which of ``group``'s datasets have not one valid estimate to average (#20).
 
     Distinct from a dataset that is merely missing *some* estimates (#18's
@@ -113,13 +113,13 @@ def rankings_by_bag_size(labelled_runs, alpha=0.05):
     average away.
 
     A dataset with nothing to contribute at this bag size
-    (:func:`_datasets_with_no_valid_estimate`) is dropped before either test
+    (:func:`datasets_with_no_valid_estimate`) is dropped before either test
     runs, rather than failing the whole bag size's ranking over the one
     dataset that has nothing to say at that size.
     """
     rankings = []
     for bag_size, group in labelled_runs.groupby(_BAG_SIZE_COLUMN, observed=True):
-        dropped = _datasets_with_no_valid_estimate(group)
+        dropped = datasets_with_no_valid_estimate(group)
         if dropped:
             group = group[~group["dataset"].isin(dropped)]
         rankings.append(

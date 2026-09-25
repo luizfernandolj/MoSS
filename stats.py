@@ -58,16 +58,22 @@ def _dataset_method_means(labelled_runs):
     return means
 
 
-def average_ranks(labelled_runs):
-    """Each method's average rank across datasets, 1 best, sorted best-first.
+def dataset_method_ranks(labelled_runs):
+    """Each method's rank within every dataset — the matrix :func:`average_ranks` collapses to one number per method.
 
     Ties within a dataset share the midpoint rank (pandas' ``"average"``
     method), which is what keeps a tie from silently favouring whichever
-    method happens to sort first.
+    method happens to sort first. Public for a reader that wants the spread
+    across datasets rather than the average alone — a rank boxplot, e.g.
     """
     means = _dataset_method_means(labelled_runs)
+    return means.rank(axis=1, method="average")
+
+
+def average_ranks(labelled_runs):
+    """Each method's average rank across datasets, 1 best, sorted best-first."""
     return (
-        means.rank(axis=1, method="average")
+        dataset_method_ranks(labelled_runs)
         .mean(axis=0)
         .rename("average_rank")
         .sort_values()
