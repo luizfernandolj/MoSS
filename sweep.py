@@ -215,7 +215,7 @@ def _prevalence_value(prevalences):
     return float(prevalences[1]) if len(prevalences) == 2 else prevalences
 
 
-def observed_prevalence(labels):
+def observed_prevalence(labels, classes=None):
     """The prevalence of the bag that was actually drawn.
 
     Not the same as the cell's target prevalence once a bag cannot be filled at
@@ -231,8 +231,25 @@ def observed_prevalence(labels):
     instead, in sorted class order (#14) — the same order :func:`_prevalence_
     value` reports for a multiclass estimate, so the two are comparable
     without either being told the other's class order.
+
+    ``classes`` names every class the bag was drawn *from*, which is not always
+    every class it contains: a prevalence vector drawn uniformly from a
+    10-class simplex gives some class a share under 0.005 often enough that
+    ``class_counts`` rounds it to zero at a bag size of 100, and a class with
+    no instances cannot appear in a mapping keyed by the labels present. Left
+    to infer the classes from the labels, this would then return a 9-vector
+    beside a 10-vector estimate, and ``runs.absolute_error`` would raise on the
+    shape mismatch rather than measure anything. Passing the pool's own classes
+    reports the absent one at zero, which is what its share in the bag is.
+    Omitted — as the synthetic sweep omits it, where a simulator draws every
+    class it was asked for — the classes are the labels present, as before.
     """
-    by_class = get_prev_from_labels(labels)
+    if classes is None:
+        by_class = get_prev_from_labels(labels)
+    else:
+        present = get_prev_from_labels(labels)
+        by_class = {cls: present.get(cls, 0.0) for cls in classes}
+
     if len(by_class) <= 2:
         _, positive = sorted(by_class.items())[1]
         return positive
@@ -592,18 +609,24 @@ class MissingRunWarning(UserWarning):
     """A method could not estimate some of its bags; those runs have no estimate."""
 
 
-def run_sweep(spec, n_jobs=1, progress=False):
+def run_sweep(spec, n_jobs=1, progress=False, desc="sweep"):
     """Run every cell of the spec's grid and return the runs as one frame.
 
     Cells are independent, so ``n_jobs`` spreads them over processes. It
     defaults to one: a smoke sweep is smaller than the cost of starting
     workers, and only the published sweep wants the whole machine.
+
+    ``desc`` labels the progress bar. It is a parameter because the published
+    run is not one sweep but one per bag size and measure
+    (:func:`run_bag_size_sweep`, :func:`run_measure_ablation`), and a bar
+    labelled only "sweep" reads as a single bar restarting over and over
+    rather than as the several passes it is.
     """
     frames = Parallel(n_jobs=n_jobs, backend="loky", return_as="generator")(
         delayed(run_cell)(cell, spec) for cell in spec.cells
     )
     if progress:
-        frames = tqdm(frames, total=len(spec.cells), desc="sweep", colour="blue")
+        frames = tqdm(frames, total=len(spec.cells), desc=desc, colour="blue")
 
     frames = list(frames)
     produced = pd.concat(frames, ignore_index=True) if frames else _frame([])
@@ -755,7 +778,7 @@ SMOKE_SWEEP = SweepSpec(
 )
 
 
-def run_measure_ablation(spec, measures=runs.MEASURES, n_jobs=1, progress=False):
+def run_measure_ablation(spec, measures=runs.MEASURES, n_jobs=1, progress=False, desc="sweep"):
     """Run ``spec`` once per measure and stack the runs into one frame.
 
     ``spec`` is a template: its own ``measure`` is overridden by each entry of
@@ -775,7 +798,10 @@ def run_measure_ablation(spec, measures=runs.MEASURES, n_jobs=1, progress=False)
     ablated = []
     for measure in measures:
         produced = run_sweep(
-            dataclasses.replace(spec, measure=measure), n_jobs=n_jobs, progress=progress
+            dataclasses.replace(spec, measure=measure),
+            n_jobs=n_jobs,
+            progress=progress,
+            desc=f"{desc}, {measure}",
         )
         produced = produced.copy()
         produced.insert(len(runs.ESTIMATOR_COLUMNS), "measure", measure)
@@ -808,8 +834,16 @@ def run_bag_size_sweep(spec, run=run_sweep, bag_sizes=BAG_SIZES, kind=runs.SYNTH
     """
     columns = list(runs.columns_for(kind))
     swept = [
-        run(dataclasses.replace(spec, bag_size=bag_size), n_jobs=n_jobs, progress=progress)
-        for bag_size in bag_sizes
+        run(
+            dataclasses.replace(spec, bag_size=bag_size),
+            n_jobs=n_jobs,
+            progress=progress,
+            # Which pass of how many, on the bar itself: the grid is identical
+            # at every bag size, so without this the four passes are four
+            # indistinguishable bars and the run looks stuck in a loop.
+            desc=f"{kind} bag size {bag_size} ({position} of {len(bag_sizes)})",
+        )
+        for position, bag_size in enumerate(bag_sizes, start=1)
     ]
     if not swept:
         return pd.DataFrame(columns=columns)

@@ -45,12 +45,18 @@ Takes considerably longer than a single bag size's worth of runs.
 
 ```
 .venv/bin/python real_data.py --dataset mushroom
+.venv/bin/python real_data.py --dataset mushroom pima_diabetes
 ```
 
-Runs one dataset only — useful while iterating, since fetching and
-cross-validating all eight takes a while. `--dataset` accepts any key of
-`real_data.DATASET_FETCHERS` — see [experiments.md](experiments.md) for the
-full list.
+Runs those datasets only — useful while iterating, and useful on the
+multiclass table in particular, where fetching and cross-validating every
+dataset is a long serial prologue before any cell runs. `--dataset` accepts
+any key of `real_data.DATASET_FETCHERS`, or of
+`real_data.MULTICLASS_DATASET_FETCHERS` when combined with `--multiclass` —
+see [experiments.md](experiments.md) for both lists. Note that each
+invocation writes the whole `results/runs/real-data.parquet`, so a table
+assembled dataset-by-dataset has to be concatenated rather than run in
+pieces over the same file.
 
 ```
 .venv/bin/python real_data.py --multiclass
@@ -59,8 +65,9 @@ full list.
 Runs the multiclass datasets
 ([#14](https://github.com/luizfernandolj/MoSS/issues/14),
 [experiments.md](experiments.md) for which) instead of the eight binary
-ones, through `real_data.build_multiclass_spec`. Cannot be combined with
-`--dataset`.
+ones, through `real_data.build_multiclass_spec`. All but `dry_bean` and
+`yeast` are CSVs read from `data/`, which is not committed — see
+[setup.md](setup.md).
 
 ## 3. The interactive dashboard — `dashboard.py`
 

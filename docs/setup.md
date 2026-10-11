@@ -40,3 +40,25 @@ Later runs against an already-fetched dataset read the cache and need no
 network. Fetching and cross-validating a classifier for all eight binary
 datasets takes a while on first run; `--dataset <name>` (see
 [running.md](running.md)) restricts a run to one dataset while iterating.
+
+## The CSVs under `data/`
+
+`real_data.py --multiclass` reads most of its datasets as CSVs under `data/`
+rather than fetching them (`utils/local_datasets.py`, which lists them). That
+directory is git-ignored — about a gigabyte of raw CSVs, the same reason
+`results/datasets/` is not committed — so it has to be put in place out of
+band, by copying it from wherever it was assembled. The fetch helpers at its
+top level *are* committed: `data/download.py` fetches the QuaPy collection
+under `data/quapy_data/`, and `data/openml_datasets.py`,
+`data/uci_datasets.py` and `data/uci2.py` fetch the others.
+
+Each collection subdirectory also carries a `preprocess.py` — not committed,
+and not what the pipeline uses either. Those are the per-dataset cleaning
+functions from the project the CSVs were assembled in, and they mix
+subsampling and feature selection into the same step.
+`utils/local_datasets.py` instead names only the columns that must not become
+features — identifiers and target leaks — and leaves encoding, imputation and
+the pool cap to `real_data.py`, which already does all three.
+
+A dataset whose CSV is missing is a loud `FileNotFoundError` naming the path,
+not a silently shorter table.

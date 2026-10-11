@@ -16,6 +16,7 @@ import runs
 import stats
 import sweep
 from tests.score_sets import scored
+from tests.test_real_data import framed
 from utils.simulators import MVNSimulator
 
 
@@ -319,9 +320,12 @@ def test_pairwise_signed_rank_ignores_a_coverage_gap_in_an_unrelated_method(
 
 @pytest.fixture
 def binary_and_multiclass_labelled_runs():
-    binary_scores, binary_labels = scored(300, 0.4)
+    # 800 rather than 300: a pool's bag frame is now the smaller part of a
+    # disjoint split (ADR-0013), so the whole fabricated set has to be large
+    # enough that two fifths of it still fills a bag of 100.
+    binary_scores, binary_labels = scored(800, 0.4)
     multiclass_scores, multiclass_labels = MVNSimulator()(
-        300, [0.3, 0.3, 0.4], 0.2, random_state=0
+        800, [0.3, 0.3, 0.4], 0.2, random_state=0
     )
 
     spec = real_data.RealDataSpec(
@@ -330,10 +334,8 @@ def binary_and_multiclass_labelled_runs():
             real_data.Cell(dataset="multiclass", target_prevalence=(0.3, 0.3, 0.4)),
         ),
         pools={
-            "binary": real_data.Pool(dataset="binary", scores=binary_scores, labels=binary_labels),
-            "multiclass": real_data.Pool(
-                dataset="multiclass", scores=multiclass_scores, labels=multiclass_labels
-            ),
+            "binary": framed("binary", binary_scores, binary_labels),
+            "multiclass": framed("multiclass", multiclass_scores, multiclass_labels),
         },
         method_simulators={runs.NO_METHOD_SIMULATOR: None},
         base_quantifiers={

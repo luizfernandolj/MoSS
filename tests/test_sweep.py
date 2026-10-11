@@ -343,6 +343,29 @@ def test_observed_prevalence_of_a_multiclass_bag_is_the_whole_vector():
     np.testing.assert_allclose(prevalence, [0.2, 0.3, 0.5], atol=0.02)
 
 
+def test_a_class_with_no_instances_is_reported_at_zero_not_left_out():
+    # A prevalence drawn from a 10-class simplex gives some class a share
+    # under 0.005 often enough that ``class_counts`` rounds it to zero at a
+    # bag size of 100 (real_data.multiclass_target_prevalences). Inferring the
+    # classes from the labels present would then return a shorter vector than
+    # the estimate beside it, and ``runs.absolute_error`` would raise on the
+    # shape mismatch rather than measure anything.
+    labels = np.array([0] * 60 + [2] * 40)
+
+    prevalence = sweep.observed_prevalence(labels, classes=np.array([0, 1, 2, 3]))
+
+    np.testing.assert_allclose(prevalence, [0.6, 0.0, 0.4, 0.0])
+
+
+def test_naming_the_classes_does_not_change_a_bag_that_holds_them_all():
+    _, labels = MVNSimulator()(1000, [0.2, 0.3, 0.5], 0.3, random_state=0)
+
+    np.testing.assert_allclose(
+        sweep.observed_prevalence(labels, classes=np.array([0, 1, 2])),
+        sweep.observed_prevalence(labels),
+    )
+
+
 # ---------------------------------------------------------------------------
 # The distance measure both meta-quantifier adapters forward (#9, ADR-0012)
 # ---------------------------------------------------------------------------
@@ -932,6 +955,41 @@ def test_the_bag_size_sweep_reuses_run_sweep_s_missing_run_reporting(smoke_spec)
         produced = run_bag_size_sweep(spec, bag_sizes=(50, 200))
 
     assert produced["estimated_prevalence"].isna().all()
+
+
+def test_each_pass_of_the_bag_size_sweep_labels_its_own_progress_bar():
+    # The grid is identical at every bag size, so four passes labelled "sweep"
+    # read as one bar restarting over and over rather than as four passes.
+    labels = []
+
+    def spy(spec, n_jobs=1, progress=False, desc="sweep"):
+        labels.append(desc)
+        return run_sweep(spec, n_jobs=n_jobs)
+
+    run_bag_size_sweep(sweep.SMOKE_SWEEP, run=spy, bag_sizes=(50, 200))
+
+    assert labels == [
+        f"{runs.SYNTHETIC} bag size 50 (1 of 2)",
+        f"{runs.SYNTHETIC} bag size 200 (2 of 2)",
+    ]
+
+
+def test_the_measure_ablation_labels_each_measure_within_its_bag_size(
+    ablation_spec, monkeypatch
+):
+    # Composed under run_bag_size_sweep the two dimensions nest, so the label
+    # has to name both or the inner passes are indistinguishable again.
+    labels = []
+    real = sweep.run_sweep
+
+    def spy(spec, n_jobs=1, progress=False, desc="sweep"):
+        labels.append(desc)
+        return real(spec, n_jobs=n_jobs)
+
+    monkeypatch.setattr(sweep, "run_sweep", spy)
+    sweep.run_measure_ablation(ablation_spec, measures=("topsoe",), desc="bag size 50")
+
+    assert labels == ["bag size 50, topsoe"]
 
 
 def test_the_bag_size_sweep_composes_with_the_measure_ablation(ablation_spec):

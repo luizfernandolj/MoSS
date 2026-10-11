@@ -67,6 +67,62 @@ correctly, that the higher-sorted label becomes the positive class (the same
 rule `sweep.observed_prevalence` reads a bag's prevalence by), and that a
 pool larger than the cap is subsampled and one within it is not.
 
+Also the two frames (ADR-0013): that the split is disjoint and covers every
+instance, that it is stratified so both frames hold every class, that the
+reference frame takes the configured share, that `draw_bag` indexes the bag
+frame alone and `Pool.reference` is the other one, and that the class floor
+is measured on the bag frame. Disjointness is asserted on the **indices**
+`_split_frames` returns, not on the score rows it produces — a 60-row forest
+emits the same probability vector for many instances, so comparing rows
+reports an overlap that is a coincidence of values rather than a shared
+instance. That was a real false failure while writing these.
+
+What the split cost Haberman is pinned rather than left to be noticed: every
+prevalence still satisfiable at `bag_size=100`, only 10%–30% positive at 500,
+and nothing at 1000 or 5000. Those three tests are what will fail loudly if
+`REFERENCE_FRACTION` moves.
+
+Plus that `n_jobs` leaves a pool **bit-identical**, which is why `build_pool` spreads
+the cross-validation folds over cores but holds the forest itself at one
+worker: folds are independent and write their own rows, while parallelising
+the trees sums their probabilities in a different order and measured 2.2e-16
+off — far too small to mean anything about a classifier, and far too large to
+leave in a reference score set the base quantifiers search by discretised
+minimisation, where a tie broken the other way is a different estimate.
+
+Also (#14) a cell at a prevalence too small for one class to reach a single
+instance — 0.002 of a bag of 100 — which is the ordinary case once the grid
+is a uniform simplex draw over many classes: 8 of the 21 vectors drawn for an
+11-class dataset leave some class empty at a bag size of 100. Its share is
+recorded at zero rather than left out of the vector, because a
+`true_prevalence` one shorter than the estimate beside it is not a
+measurement — `runs.absolute_error` raises on the shape mismatch. Asserted
+both on the vector and through `absolute_error`, plus at the
+`sweep.observed_prevalence` seam itself, where naming the classes is also
+asserted *not* to change a bag that holds them all (the synthetic sweep never
+names them, and a simulator always draws every class it was asked for).
+
+**Local datasets** (`tests/test_local_datasets.py`, #14). The CSV-backed
+multiclass pools: that a loader separates the label from the features, drops
+the columns that must not be features and keeps the categorical ones that
+must, names a missing column in the error rather than failing later on a
+shape, and presents itself with an mlquantify fetcher's signature — which is
+the whole point of the module, since it is what lets `real_data.fetch_pool`
+stay unchanged (asserted by building a pool through it). Plus the registry
+properties that protect the statistics downstream: no CSV registered twice
+under two names, nothing shadowing a binary dataset, and `dry_bean` not
+registered a second time as `quapy_data/dry-bean.csv` — registered twice, one
+dataset enters `stats.py`'s Friedman and Nemenyi tests as two and
+double-weights its own opinion of the methods.
+
+Fabricated CSVs in `tmp_path` throughout (`load` and `fetcher` both take
+`csv_root`), because `data/` is about a gigabyte and is not committed. The
+exception is one parametrized test that reads five rows of each real CSV for
+its header alone, asserting every column the registry names actually exists,
+and skips when the file is absent. It is worth the dependency: a typo in a
+`drop` list is otherwise found by the server run that was supposed to produce
+the published table, hours in.
+
 **Validating a produced sweep** (`tests/test_sweep.py`, ADR-0012). `sweep.
 validate` is what #9 asked the re-run's own output to be checked against
 before anything is plotted: a run tying the estimate stored immediately before
