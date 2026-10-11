@@ -9,11 +9,20 @@ second copy.
 
 A *pool* is the fixed collection of real instances a dataset's bags are drawn
 from — the counterpart of a data simulator, except nothing here can draw more
-of it than exists. Its scores are a Random Forest's ten-fold out-of-fold
-probabilities over the whole (possibly capped) dataset, which double as the
-reference score set every method matches a bag against: out-of-fold rather
-than refit, so the reference is never the classifier's own training scores
-(ADR-0005).
+of it than exists. It holds two disjoint frames (ADR-0013): a **reference
+frame**, three fifths of the capped dataset, scored by ten-fold
+cross-validation within itself, which is the reference score set every method
+matches a bag against; and a **bag frame**, the other two fifths, scored by a
+Random Forest fitted on the whole reference frame and drawn from by
+:func:`draw_bag`.
+
+Both halves of that are load-bearing and they answer different objections.
+Scoring out-of-fold rather than refitting keeps the reference from being the
+classifier's own training scores, which are overconfident (ADR-0005). Keeping
+the frames disjoint keeps a bag's own instances out of the distribution the
+bag is estimated against — which ADR-0005 never addressed, and which a single
+frame doing both jobs got wrong by as much as half the reference on the
+smaller pools.
 
 Bags are drawn under the artificial-prevalence protocol, class by class,
 without replacement first — the same reason as ever: sampling with
@@ -48,13 +57,14 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
 from sklearn.preprocessing import OrdinalEncoder
 from tqdm import tqdm
 
 import runs
 import sweep
 from mlquantify import datasets as mlquantify_datasets
+from utils import local_datasets
 from utils.simulators import ScoreSimulator, as_prevalence, class_counts
 
 # --- The pool ----------------------------------------------------------------
@@ -62,27 +72,48 @@ from utils.simulators import ScoreSimulator, as_prevalence, class_counts
 
 @dataclass(frozen=True)
 class Pool:
-    """The fixed collection of real instances one dataset's bags are drawn from.
+    """One dataset's two disjoint frames: what bags come from, and what they
+    are matched against (ADR-0013).
 
-    ``scores`` are the classifier's out-of-fold posterior probabilities
-    (ADR-0005) and ``labels`` are the dataset's own, 0/1 and in the same row
-    order. Together they are this dataset's reference score set, the same
-    shape :class:`sweep.ReferenceScoreSet` carries for a synthetic cell — a
-    pool differs only in that nothing can draw a fresh one; every bag comes
-    from a subset of the rows already here.
+    ``scores`` and ``labels`` are the **bag frame** — the instances
+    :func:`draw_bag` samples, scored by a classifier that was fitted on the
+    other frame entirely and so has never seen them.
+    ``reference_scores`` and ``reference_labels`` are the **reference frame**,
+    the labelled score distribution a quantifier matches a bag against, scored
+    out-of-fold within itself.
+
+    The two share no instance. Before ADR-0013 there was one frame doing both
+    jobs, which put a bag's own instances inside the distribution it was being
+    estimated against — negligible for a bag of 100 drawn from 50,000, and
+    half the reference for a bag of 1000 drawn from 2,000. Out-of-fold scoring
+    (ADR-0005) answers a different question, overconfidence, and never
+    addressed this one.
     """
 
     dataset: str
     scores: np.ndarray
     labels: np.ndarray
+    reference_scores: np.ndarray
+    reference_labels: np.ndarray
 
     @property
     def classes(self):
-        return np.unique(self.labels)
+        """The class space, read off the reference frame.
+
+        The reference's classes and not the bag frame's, because this is what
+        a quantifier's estimate will have one entry per: the grid's prevalence
+        vectors are sized by it, :func:`draw_bag` divides a bag size by it, and
+        ``sweep.observed_prevalence`` reports a share for each of them. A
+        stratified split gives both frames the same classes anyway; taking
+        them from the side the estimate is shaped by means a bag frame that
+        somehow lost one produces a missing run rather than a vector of the
+        wrong length.
+        """
+        return np.unique(self.reference_labels)
 
     @property
     def reference(self):
-        return sweep.ReferenceScoreSet(self.scores, self.labels)
+        return sweep.ReferenceScoreSet(self.reference_scores, self.reference_labels)
 
 
 #: How many times a short class may be bootstrap-replicated past its own
@@ -344,7 +375,13 @@ def run_cell(cell, spec):
             replication = None
         else:
             bag_scores = pool.scores[bag_indices]
-            true_prevalence = sweep.observed_prevalence(pool.labels[bag_indices])
+            # The pool's classes, not the bag's: a class the target prevalence
+            # rounded down to zero instances is still a class this bag has a
+            # (zero) share of, and the estimate beside it will carry a value
+            # for it either way (``sweep.observed_prevalence``).
+            true_prevalence = sweep.observed_prevalence(
+                pool.labels[bag_indices], classes=pool.classes
+            )
             replication = bag_replication(bag_indices)
 
         for method_simulator in spec.method_simulators:
@@ -403,20 +440,23 @@ def _progress(iterable, total, desc, colour=None):
         )
 
 
-def run_sweep(spec, n_jobs=1, progress=False):
+def run_sweep(spec, n_jobs=1, progress=False, desc="real-data sweep"):
     """Run every cell of the spec's grid and return the runs as one frame.
 
     ``sweep.run_sweep`` in every respect but the cell runner and the table
     shape: cells are independent, so ``n_jobs`` spreads them over processes,
     and missing runs are reported the same way (``sweep._warn_about_missing_
-    runs``), once per method rather than once per failure.
+    runs``), once per method rather than once per failure. ``desc`` labels the
+    progress bar and is a parameter for the same reason it is there, so that
+    ``sweep.run_bag_size_sweep``'s one pass per bag size can say which pass it
+    is on.
     """
     frames = Parallel(n_jobs=n_jobs, backend="loky", return_as="generator")(
         delayed(run_cell)(cell, spec) for cell in spec.cells
     )
     if progress:
         frames = _progress(
-            frames, total=len(spec.cells), desc="real-data sweep", colour="green"
+            frames, total=len(spec.cells), desc=desc, colour="green"
         )
 
     frames = list(frames)
@@ -489,13 +529,27 @@ DATASET_FETCHERS = {
 
 #: Multiclass tabular datasets (#14): evidence that the simplex simulators
 #: (MVN, Dirichlet) do work the binary uniform simulator cannot even attempt
-#: (CONTEXT.md). Two rather than a matching eight — this table's question is
-#: whether the simplex simulators generalise at all, not a second ADR-0005
-#: coverage claim — chosen for different class counts (7 and 10) so the
-#: pipeline is exercised at more than one simplex dimension.
+#: (CONTEXT.md).
+#:
+#: The two mlquantify fetches came first, chosen for differing class counts (7
+#: and 10) when this table's only question was whether the simplex simulators
+#: generalise at all. The rest are CSVs under ``data/``, registered through
+#: ``utils/local_datasets.py``, which answers that question across class
+#: counts 3 to 11 instead of at two points — and lets the Friedman and Nemenyi
+#: tests in ``stats.py``, which rank methods *over datasets*, say something
+#: about the multiclass table rather than only the binary one. See
+#: :data:`utils.local_datasets.MULTICLASS_DATASETS` for which CSVs were left
+#: out and why.
+#:
+#: ``yeast`` is listed and then dropped: its smallest class is under
+#: :data:`MIN_CLASS_SIZE`, so :func:`_above_class_floor` excludes it (#18). It
+#: stays named here rather than deleted because its absence is a fact about the
+#: dataset that the floor should keep reporting, not one to bury by unlisting
+#: it.
 MULTICLASS_DATASET_FETCHERS = {
     "dry_bean": mlquantify_datasets.fetch_dry_bean,
     "yeast": mlquantify_datasets.fetch_yeast,
+    **local_datasets.MULTICLASS_FETCHERS,
 }
 
 #: Where fetched datasets are cached, anchored to this file for the same
@@ -551,27 +605,121 @@ def _capped(X, y, cap, random_state):
     return X[keep], y[keep]
 
 
-def build_pool(name, X, y, *, cap=POOL_CAP, cv_folds=10, random_state=None):
-    """A dataset's pool: capped, encoded, and scored out-of-fold.
+#: What share of a pool becomes the reference frame, the rest being the bag
+#: frame (ADR-0013). Three fifths: the reference has to carry a usable
+#: estimate of each class's score distribution, and the bag frame has to be
+#: deep enough that a bag of 100 at an extreme prevalence does not need
+#: replicating past :data:`REPLICATION_CAP` on the small pools — Haberman's
+#: 81 minority instances are the binding case either way.
+REFERENCE_FRACTION = 0.6
 
-    Out-of-fold rather than refit, so the reference a method matches a bag
-    against is never the classifier's own training scores (ADR-0005) — those
-    are overconfident and would make it unrepresentative of what the method
-    sees at prediction time. Takes ``X`` and ``y`` already loaded, so a test
-    can build a pool from a fabricated frame without reaching the network.
+
+def _split_frames(y, reference_fraction, random_state):
+    """Indices of the reference frame and the bag frame, stratified and disjoint.
+
+    Stratified so both frames hold every class in roughly the dataset's own
+    proportions: an unstratified split can leave a rare class out of one side
+    entirely, which would either silently shrink the class space a quantifier
+    estimates over or make a prevalence unreachable for reasons that have
+    nothing to do with the dataset's size.
+    """
+    reference, bag = train_test_split(
+        np.arange(len(y)),
+        train_size=reference_fraction,
+        stratify=y,
+        random_state=random_state,
+    )
+    return np.sort(reference), np.sort(bag)
+
+
+def build_pool(
+    name, X, y, *, cap=POOL_CAP, cv_folds=10, random_state=None, n_jobs=1,
+    reference_fraction=REFERENCE_FRACTION,
+):
+    """A dataset's pool: capped, encoded, split in two, and scored (ADR-0013).
+
+    Two frames, sharing no instance. The reference frame is scored
+    **out-of-fold within itself** — cross-validated, so the distribution a
+    method matches a bag against is never the classifier's own training
+    scores, which ADR-0005 rejects as overconfident. The bag frame is scored
+    by a single forest fitted on the whole reference frame, which has never
+    seen it, so those scores are out-of-sample for the same reason without
+    needing a second cross-validation.
+
+    That split is what ADR-0005 left undone. Scoring out-of-fold stops the
+    reference from being overconfident; it does nothing to stop a bag's own
+    instances from sitting inside the distribution the bag is estimated
+    against. With one frame doing both jobs, a bag of 1000 drawn from a
+    2,000-instance pool *was* half of its own reference, and the mixture
+    search a base quantifier runs is easier against a reference it helped
+    build.
+
+    Takes ``X`` and ``y`` already loaded, so a test can build a pool from a
+    fabricated frame without reaching the network.
+
+    ``n_jobs`` spreads the *folds* over cores, and deliberately not the
+    forest's own trees. Folds are independent and each writes its own rows, so
+    running them in parallel leaves the scores bit-identical; the forest is a
+    different matter — it averages its trees' probabilities, and a parallel
+    average sums them in a different order, which came out 2.2e-16 away from
+    the serial one when measured. That is far too small to mean anything about
+    a classifier and far too large to leave in the reference score set of an
+    experiment whose quantifiers do discretised searches over it: a tie broken
+    the other way is a different estimate, and ADR-0011's whole point is that
+    a run's inputs are reproducible rather than nearly so. So
+    ``RandomForestClassifier`` keeps its own default of one worker here
+    whatever ``n_jobs`` says.
+
+    Default one, like ``run_sweep``'s: a test builds pools from tiny frames,
+    where starting workers costs more than the fit. :func:`_main` passes
+    ``-1``, which is the case that needs it: this step is serial across
+    datasets and runs entirely before the first cell, so on the published
+    multiclass table it is otherwise one core building twenty pools, two of
+    them 50,000 instances wide by several hundred features.
     """
     X = _numeric_features(X)
     y = _encode_labels(y)
     X, y = _capped(X, y, cap, random_state)
 
-    oof_scores = cross_val_predict(
+    reference, bag = _split_frames(y, reference_fraction, random_state)
+
+    reference_scores = cross_val_predict(
         RandomForestClassifier(random_state=random_state),
-        X,
-        y,
+        X[reference],
+        y[reference],
         cv=StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=random_state),
         method="predict_proba",
+        n_jobs=n_jobs,
     )
-    return Pool(dataset=name, scores=oof_scores, labels=y)
+
+    # One forest on the whole reference frame, rather than a second
+    # cross-validation: the bag frame is already unseen by it, which is the
+    # property out-of-fold scoring buys for the reference. Fitting on all of
+    # the reference rather than on a fold of it also means the bag frame is
+    # scored by a better-trained classifier than any single fold's, which is
+    # what a method would face at prediction time.
+    scored_by = RandomForestClassifier(random_state=random_state).fit(
+        X[reference], y[reference]
+    )
+    bag_scores = scored_by.predict_proba(X[bag])
+
+    # ``predict_proba`` orders its columns by ``classes_`` and
+    # ``cross_val_predict`` by the classes present in what it was given. A
+    # stratified split puts every class in both frames, so the two agree — but
+    # a bag matched against a reference whose columns mean different classes
+    # would be silently, plausibly wrong rather than loud, so it is checked.
+    if not np.array_equal(scored_by.classes_, np.unique(y[reference])):
+        raise ValueError(
+            f"{name!r}: the bag frame's score columns do not match the reference's"
+        )
+
+    return Pool(
+        dataset=name,
+        scores=bag_scores,
+        labels=y[bag],
+        reference_scores=reference_scores,
+        reference_labels=y[reference],
+    )
 
 
 #: Every fetcher this module knows how to name a pool from, binary and
@@ -580,16 +728,25 @@ def build_pool(name, X, y, *, cap=POOL_CAP, cv_folds=10, random_state=None):
 _ALL_DATASET_FETCHERS = {**DATASET_FETCHERS, **MULTICLASS_DATASET_FETCHERS}
 
 
-def fetch_pool(name, *, data_home=DATA_HOME, cap=POOL_CAP, cv_folds=10, random_state=None):
+def fetch_pool(
+    name, *, data_home=DATA_HOME, cap=POOL_CAP, cv_folds=10, random_state=None,
+    n_jobs=1, reference_fraction=REFERENCE_FRACTION,
+):
     """Fetch, cache and score one dataset by name (ADR-0005).
 
-    The one function in this module that reaches the network — everything
-    downstream of :class:`Pool` neither knows nor cares where it came from, or
-    whether it is binary or multiclass (#14).
+    The one function in this module that reaches outside the process — for
+    most datasets to the network, for the multiclass CSVs under ``data/`` to
+    the disk (``utils/local_datasets.py``). Everything downstream of
+    :class:`Pool` neither knows nor cares which it was, or whether the dataset
+    is binary or multiclass (#14), which is why a local dataset needed a
+    fetcher-shaped loader rather than a branch here.
     """
     fetch = _ALL_DATASET_FETCHERS[name]
     X, y = fetch(data_home=str(data_home), return_X_y=True)
-    return build_pool(name, X, y, cap=cap, cv_folds=cv_folds, random_state=random_state)
+    return build_pool(
+        name, X, y, cap=cap, cv_folds=cv_folds, random_state=random_state,
+        n_jobs=n_jobs, reference_fraction=reference_fraction,
+    )
 
 
 # --- The published spec -----------------------------------------------------
@@ -617,7 +774,16 @@ MIN_CLASS_SIZE = 30
 
 
 def _meets_class_floor(pool):
-    """Whether every class in ``pool`` clears :data:`MIN_CLASS_SIZE`."""
+    """Whether every class in ``pool``'s **bag frame** clears :data:`MIN_CLASS_SIZE`.
+
+    The bag frame and not the whole dataset, because the floor exists to say
+    whether bags can actually be filled (#18) and bags come only from there
+    (ADR-0013). That makes it a stricter test than before the split — a class
+    needs :data:`MIN_CLASS_SIZE` instances in the two fifths of the pool that
+    became the bag frame, not in all of it — which is the honest reading: a
+    class with 30 instances spread across both frames never could fill a bag
+    from the frame bags are drawn from.
+    """
     return np.unique(pool.labels, return_counts=True)[1].min() >= MIN_CLASS_SIZE
 
 
@@ -684,30 +850,62 @@ def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--dataset",
-        choices=tuple(DATASET_FETCHERS),
-        help="run one binary dataset only, rather than all eight",
+        nargs="+",
+        metavar="NAME",
+        choices=tuple(_ALL_DATASET_FETCHERS),
+        help=(
+            "run these datasets only, rather than the whole table. Names must "
+            "all come from the table --multiclass selects: the binary one by "
+            "default, the multiclass one with --multiclass"
+        ),
     )
     parser.add_argument(
         "--multiclass",
         action="store_true",
         help="run the multiclass datasets (#14) instead of the eight binary ones",
     )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=-1,
+        metavar="N",
+        help=(
+            "how many processes to spread cells over, and folds over while "
+            "building pools (default -1, every core). Worth setting below -1's "
+            "worth on a memory-bound machine rather than a core-bound one: "
+            "every worker is handed a copy of every pool in the spec, so peak "
+            "memory grows with this and not with the grid"
+        ),
+    )
     args = parser.parse_args()
 
-    if args.multiclass:
-        if args.dataset:
-            raise SystemExit("--dataset names a binary dataset; it cannot be combined with --multiclass")
-        names = tuple(MULTICLASS_DATASET_FETCHERS)
+    # Which table a run belongs to is the mode's call, not the dataset list's:
+    # the grid, the spec builder and the prevalence shape all differ between
+    # them (:func:`build_spec` against :func:`build_multiclass_spec`), so a
+    # name from the wrong table would be run under the wrong grid rather than
+    # merely mislabelled.
+    table = MULTICLASS_DATASET_FETCHERS if args.multiclass else DATASET_FETCHERS
+    if args.dataset:
+        wrong_table = [name for name in args.dataset if name not in table]
+        if wrong_table:
+            raise SystemExit(
+                f"{wrong_table} are not in the "
+                f"{'multiclass' if args.multiclass else 'binary'} table; "
+                f"{'drop' if args.multiclass else 'add'} --multiclass to run them"
+            )
+        names = tuple(dict.fromkeys(args.dataset))
     else:
-        names = (args.dataset,) if args.dataset else tuple(DATASET_FETCHERS)
+        names = tuple(table)
 
     pools = {
-        name: fetch_pool(name, random_state=20260911)
+        name: fetch_pool(name, random_state=20260911, n_jobs=args.n_jobs)
         for name in _progress(names, total=len(names), desc="datasets", colour="blue")
     }
 
     spec_builder = build_multiclass_spec if args.multiclass else build_spec
-    produced = run_bag_size_sweep(spec_builder(pools, seed=20260911), n_jobs=-1, progress=True)
+    produced = run_bag_size_sweep(
+        spec_builder(pools, seed=20260911), n_jobs=args.n_jobs, progress=True
+    )
 
     # Not sweep.validate_and_save: its collapse check (sweep.validate_no_
     # collapsed_groups) is calibrated against the synthetic sweep's continuous
@@ -724,7 +922,13 @@ def _main():
     print(f"{missing} of {len(produced)} runs have no estimate")
     for dataset, count in missing_by_dataset(produced).items():
         print(f"  {dataset}: {count}")
-    print(runs.save(produced, runs.REAL_DATA))
+
+    # Merged rather than written over: one real-data table holds the binary
+    # and the multiclass runs together (``runs`` module docstring), but one
+    # invocation produces only one of them, and with ``--dataset`` only part
+    # of one. A plain save would have the multiclass run discard the published
+    # binary table it was meant to join.
+    print(runs.save_merged_by_dataset(produced, runs.REAL_DATA))
 
 
 if __name__ == "__main__":

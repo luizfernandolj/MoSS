@@ -215,4 +215,10 @@ results/results_jp.csv
 results/runs/
 results/datasets/
 
+# The raw CSVs the multiclass real-data sweep reads (#14, utils/local_datasets.py):
+# about a gigabyte, so put in place out of band rather than committed — see
+# docs/setup.md. The fetch helpers beside them are committed.
+data/*
+!data/*.py
+
 .scratch/

@@ -119,6 +119,109 @@ def test_the_two_kinds_do_not_overwrite_each_other(
     assert len(runs.load(runs.REAL_DATA, root=results_root)) == len(real_data_runs)
 
 
+# ---------------------------------------------------------------------------
+# Merging a run into an existing table (#14)
+# ---------------------------------------------------------------------------
+#
+# One real-data table holds the binary and the multiclass runs together
+# (module docstring), but one invocation of real_data.py produces only one of
+# them. Writing through ``save`` would have the multiclass run discard the
+# published binary table it was meant to join — 342,720 rows, when this was
+# found.
+
+
+def _with_datasets(frame, *datasets):
+    """``frame``, repeated once per dataset name, under each of those names."""
+    return pd.concat(
+        [frame.assign(dataset=dataset) for dataset in datasets], ignore_index=True
+    )
+
+
+def test_merging_keeps_the_datasets_the_new_run_did_not_touch(
+    results_root, real_data_runs
+):
+    published = _with_datasets(real_data_runs, "mushroom", "haberman_survival")
+    runs.save(published, runs.REAL_DATA, root=results_root)
+
+    runs.save_merged_by_dataset(
+        _with_datasets(real_data_runs, "dry_bean"), runs.REAL_DATA, root=results_root
+    )
+
+    merged = runs.load(runs.REAL_DATA, root=results_root)
+    assert set(merged["dataset"]) == {"mushroom", "haberman_survival", "dry_bean"}
+
+
+def test_merging_replaces_a_dataset_rather_than_appending_to_it(
+    results_root, real_data_runs
+):
+    # A dataset re-run after a fix should end up with one set of runs, not two
+    # that every reader downstream silently averages together.
+    first = _with_datasets(real_data_runs, "dry_bean")
+    runs.save(first, runs.REAL_DATA, root=results_root)
+
+    runs.save_merged_by_dataset(first, runs.REAL_DATA, root=results_root)
+
+    merged = runs.load(runs.REAL_DATA, root=results_root)
+    assert len(merged) == len(first)
+
+
+def test_merging_into_nothing_is_an_ordinary_write(results_root, real_data_runs):
+    produced = _with_datasets(real_data_runs, "dry_bean")
+
+    runs.save_merged_by_dataset(produced, runs.REAL_DATA, root=results_root)
+
+    assert len(runs.load(runs.REAL_DATA, root=results_root)) == len(produced)
+
+
+def test_merging_leaves_the_table_in_the_schema_s_column_order(
+    results_root, real_data_runs
+):
+    runs.save(_with_datasets(real_data_runs, "mushroom"), runs.REAL_DATA, root=results_root)
+
+    runs.save_merged_by_dataset(
+        _with_datasets(real_data_runs, "dry_bean"), runs.REAL_DATA, root=results_root
+    )
+
+    merged = runs.load(runs.REAL_DATA, root=results_root)
+    assert tuple(merged.columns) == runs.columns_for(runs.REAL_DATA)
+
+
+def test_merging_cannot_smuggle_in_a_row_a_direct_write_would_refuse(
+    results_root, real_data_runs
+):
+    runs.save(_with_datasets(real_data_runs, "mushroom"), runs.REAL_DATA, root=results_root)
+    nonsense = _with_datasets(real_data_runs, "dry_bean").assign(
+        base_quantifier="NoSuchQuantifier"
+    )
+
+    with pytest.raises(ValueError, match="NoSuchQuantifier"):
+        runs.save_merged_by_dataset(nonsense, runs.REAL_DATA, root=results_root)
+
+
+def test_a_binary_table_survives_a_multiclass_run_joining_it(
+    results_root, real_data_runs
+):
+    # The regression for what this function was added for: the scalar
+    # prevalences of a binary table and the vectors of a multiclass one in the
+    # same file, each still readable as itself.
+    binary = _with_datasets(real_data_runs, "mushroom")
+    runs.save(binary, runs.REAL_DATA, root=results_root)
+    multiclass = _with_datasets(real_data_runs, "dry_bean").assign(
+        target_prevalence=[(0.2, 0.3, 0.5)] * len(real_data_runs),
+        true_prevalence=[(0.21, 0.29, 0.5)] * len(real_data_runs),
+        estimated_prevalence=[(0.22, 0.28, 0.5)] * len(real_data_runs),
+    )
+
+    runs.save_merged_by_dataset(multiclass, runs.REAL_DATA, root=results_root)
+
+    merged = runs.load(runs.REAL_DATA, root=results_root)
+    scalars = merged[merged["dataset"] == "mushroom"]["true_prevalence"]
+    vectors = merged[merged["dataset"] == "dry_bean"]["true_prevalence"]
+    assert set(scalars) == {0.42}
+    assert all(len(vector) == 3 for vector in vectors)
+    assert runs.absolute_error(merged).notna().all()
+
+
 def test_everything_written_is_parquet(results_root, synthetic_runs, real_data_runs):
     # The previous single CSV reached 291 MB and had to be split three ways to
     # clear a hosting limit; the split then leaked into every reader.

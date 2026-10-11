@@ -22,6 +22,26 @@ from tests.score_sets import scored
 from utils.simulators import MVNSimulator
 
 
+def framed(name, scores, labels, reference_fraction=real_data.REFERENCE_FRACTION):
+    """Fabricated scores split into a pool's two disjoint frames (ADR-0013).
+
+    The same stratified split ``real_data._split_frames`` makes, applied to
+    scores that were fabricated rather than cross-validated — so a test gets a
+    pool whose bag frame and reference frame share no row, without training
+    anything. ``n`` in the callers below is therefore the size of the *whole*
+    fabricated set; the bag frame these tests draw from is the smaller part of
+    it.
+    """
+    reference, bag = real_data._split_frames(labels, reference_fraction, 0)
+    return real_data.Pool(
+        dataset=name,
+        scores=scores[bag],
+        labels=labels[bag],
+        reference_scores=scores[reference],
+        reference_labels=labels[reference],
+    )
+
+
 def pool(name, n, prevalence, **score_kwargs):
     """A pool with a real reference score set but fabricated scores.
 
@@ -29,7 +49,7 @@ def pool(name, n, prevalence, **score_kwargs):
     the same reason ``tests/score_sets.py`` exists for the synthetic sweep.
     """
     scores, labels = scored(n, prevalence, **score_kwargs)
-    return real_data.Pool(dataset=name, scores=scores, labels=labels)
+    return framed(name, scores, labels)
 
 
 def multiclass_pool(name, n, prevalence, merging_factor=0.2, random_state=0):
@@ -42,7 +62,7 @@ def multiclass_pool(name, n, prevalence, merging_factor=0.2, random_state=0):
     re-verify.
     """
     scores, labels = MVNSimulator()(n, prevalence, merging_factor, random_state=random_state)
-    return real_data.Pool(dataset=name, scores=scores, labels=labels)
+    return framed(name, scores, labels)
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +174,13 @@ def haberman_shaped_pool():
 
     Fabricated scores, not a downloaded dataset: this suite is about the grid
     this shape produces, not about Haberman's own posterior scores.
+
+    Those 306 are the whole dataset. Two fifths of it become the bag frame
+    (ADR-0013), so what :func:`real_data.draw_bag` actually draws from here is
+    123 instances — 33 minority, 90 majority — and it is those counts, not
+    Haberman's own, that every coverage boundary below is computed from. The
+    33 clears :data:`real_data.MIN_CLASS_SIZE` by three, which is what keeps
+    Haberman in the published grid at all.
     """
     return pool("haberman_survival", 306, 81 / 306)
 
@@ -185,9 +212,9 @@ def test_a_bag_at_the_pool_s_exact_capacity_is_drawn():
 def test_a_class_within_the_replication_cap_is_filled_with_replacement(
     haberman_shaped_pool,
 ):
-    # 90 minority instances needed from 81 available is beyond plain capacity
-    # but within the 5x cap (405): draw_bag bootstrap-replicates the short
-    # class instead of recording a missing run.
+    # 90 minority instances needed from the bag frame's 33 is beyond plain
+    # capacity but within the 5x cap (165): draw_bag bootstrap-replicates the
+    # short class instead of recording a missing run.
     indices = real_data.draw_bag(haberman_shaped_pool, 0.9, 100, random_state=1)
 
     assert indices is not None
@@ -196,15 +223,16 @@ def test_a_class_within_the_replication_cap_is_filled_with_replacement(
 
 
 def test_a_class_beyond_the_replication_cap_is_still_missing(haberman_shaped_pool):
-    # 81 minority instances, capped at 5x = 405 (real_data.REPLICATION_CAP): a
-    # size-1000 bag at 90% positive needs 900, beyond even the cap.
+    # 33 minority instances in the bag frame, capped at 5x = 165
+    # (real_data.REPLICATION_CAP): a size-1000 bag at 90% positive needs 900,
+    # beyond even the cap.
     assert real_data.draw_bag(haberman_shaped_pool, 0.9, 1000, random_state=1) is None
 
 
 def test_a_shortfall_on_the_majority_side_is_also_capped(haberman_shaped_pool):
     # The cap applies per class, not only to the historically-discussed
-    # minority one: 225 majority instances, capped at 5x = 1125, cannot supply
-    # the 4950 a size-5000 bag at 1% positive needs.
+    # minority one: 90 majority instances in the bag frame, capped at 5x =
+    # 450, cannot supply the 4950 a size-5000 bag at 1% positive needs.
     assert real_data.draw_bag(haberman_shaped_pool, 0.01, 5000, random_state=1) is None
 
 
@@ -218,10 +246,12 @@ def test_a_seeded_bootstrap_draw_is_the_same_bag_twice(haberman_shaped_pool):
 def test_the_published_grid_s_high_prevalences_are_no_longer_missing_at_bag_size_100(
     haberman_shaped_pool,
 ):
-    # #18: bootstrap replication up to the 5x cap (405 for Haberman's 81
-    # minority instances) comfortably covers every published prevalence at
-    # the smallest bag size — this is the shortfall the test below now shows
-    # moved to larger bag sizes instead.
+    # #18: bootstrap replication up to the 5x cap (165 for the bag frame's 33
+    # minority instances, 450 for its 90 majority) still covers every
+    # published prevalence at the smallest bag size, even after ADR-0013 cut
+    # the frame bags come from to two fifths of the pool. This is the whole
+    # reason Haberman survives the split: the bag_size=100 slice the published
+    # figures use is complete for it.
     for p in real_data.TARGET_PREVALENCES:
         assert (
             real_data.draw_bag(haberman_shaped_pool, p, 100, random_state=1)
@@ -229,23 +259,34 @@ def test_the_published_grid_s_high_prevalences_are_no_longer_missing_at_bag_size
         )
 
 
-@pytest.mark.parametrize("bag_size, threshold", [(500, 0.80), (1000, 0.40)])
-def test_the_published_grid_s_high_prevalences_are_missing_at_larger_bag_sizes(
-    haberman_shaped_pool, bag_size, threshold
+def test_the_bag_frame_only_covers_the_middle_of_the_grid_at_bag_size_500(
+    haberman_shaped_pool,
 ):
-    # The same shortfall the size-100 grid no longer shows (verified against
-    # class_counts, the same way the pre-#18 bag_size=100 boundary was): the
-    # 81 minority instances are capped at 5x = 405, and the share of the bag
-    # that needs more than that shrinks as bag_size grows — from above 80% at
-    # 500 to above 40% at 1000.
-    missing = {
+    # What ADR-0013 cost Haberman, stated rather than left to be noticed: with
+    # 33 minority (cap 165) and 90 majority (cap 450) in the bag frame, a bag
+    # of 500 is satisfiable only between 10% and 30% positive. Before the
+    # split it reached 80%.
+    satisfiable = {
         p
         for p in real_data.TARGET_PREVALENCES
-        if real_data.draw_bag(haberman_shaped_pool, p, bag_size, random_state=1)
-        is None
+        if real_data.draw_bag(haberman_shaped_pool, p, 500, random_state=1) is not None
     }
 
-    assert missing == {p for p in real_data.TARGET_PREVALENCES if p > threshold}
+    assert satisfiable == {0.1, 0.15, 0.2, 0.25, 0.3}
+
+
+@pytest.mark.parametrize("bag_size", [1000, 5000])
+def test_the_bag_frame_cannot_fill_the_largest_bags_at_all(
+    haberman_shaped_pool, bag_size
+):
+    # A 123-instance bag frame cannot reach a bag of 1000 at any prevalence
+    # within the replication cap, so Haberman contributes nothing at the two
+    # largest bag sizes — every method's run there is explicitly missing
+    # rather than quietly absent.
+    assert all(
+        real_data.draw_bag(haberman_shaped_pool, p, bag_size, random_state=1) is None
+        for p in real_data.TARGET_PREVALENCES
+    )
 
 
 def test_a_seeded_draw_is_the_same_bag_twice(haberman_shaped_pool):
@@ -273,7 +314,10 @@ def test_two_seeds_draw_different_bags(haberman_shaped_pool):
 #: is registered but otherwise unused unless a test asks for its cell by name.
 TWO_POOLS = {
     "haberman_survival": pool("haberman_survival", 306, 81 / 306),
-    "mushroom": pool("mushroom", 400, 0.5),
+    #: 2000 rather than 400: only two fifths of a pool is the bag frame now
+    #: (ADR-0013), and this pool's job is to be the *satisfiable* one in specs
+    #: that pair it with Haberman at bag sizes up to 1000.
+    "mushroom": pool("mushroom", 2000, 0.5),
 }
 
 #: The smallest real-data spec that still covers every method — one cell, the
@@ -486,6 +530,44 @@ def test_a_multiclass_run_s_estimate_is_a_prevalence_vector(multiclass_cell):
     for estimate in multiclass_cell["estimated_prevalence"]:
         assert len(estimate) == 3
         assert sum(estimate) == pytest.approx(1.0)
+
+
+@pytest.fixture(scope="module")
+def cell_whose_bag_misses_a_class():
+    """A cell at a prevalence too small for one class to reach one instance.
+
+    0.002 of a bag of 100 is 0.2, which ``class_counts`` rounds to zero — the
+    ordinary case once the prevalence grid is a uniform draw from a simplex of
+    seven classes or more (``multiclass_target_prevalences``): 8 of the 21
+    vectors drawn for an 11-class dataset leave some class empty at this bag
+    size.
+    """
+    pools = {"four_class": multiclass_pool("four_class", 900, [0.25] * 4)}
+    spec = real_data.RealDataSpec(
+        cells=(real_data.Cell(dataset="four_class", target_prevalence=(0.498, 0.002, 0.3, 0.2)),),
+        pools=pools,
+        method_simulators=sweep.METHOD_SIMULATORS,
+        base_quantifiers=sweep.BASE_QUANTIFIERS,
+        bag_size=100,
+        repetitions=1,
+        seed=20260914,
+    )
+    return real_data.run_cell(spec.cells[0], spec)
+
+
+def test_a_bag_missing_a_class_still_records_a_share_for_it(cell_whose_bag_misses_a_class):
+    # Reported at zero rather than left out: a vector one short of the
+    # estimate's is not a measurement, it is a shape ``absolute_error``
+    # cannot subtract.
+    for true_prevalence in cell_whose_bag_misses_a_class["true_prevalence"]:
+        assert len(true_prevalence) == 4
+        assert true_prevalence[1] == 0.0
+
+
+def test_a_bag_missing_a_class_still_has_a_measurable_error(cell_whose_bag_misses_a_class):
+    error = runs.absolute_error(cell_whose_bag_misses_a_class)
+
+    assert error.notna().all()
 
 
 def test_an_unsatisfiable_cell_records_every_method_as_missing(smoke_real_data_spec):
@@ -752,11 +834,12 @@ def test_a_pool_below_the_class_floor_never_appears_in_the_built_binary_grid():
 
 
 def test_the_class_floor_s_exact_boundary():
-    # 1000 * 0.03 == 30, exactly at MIN_CLASS_SIZE; 1000 * 0.029 == 29, one
-    # under it.
+    # Measured on the bag frame, which is two fifths of the pool (ADR-0013):
+    # 1000 * 0.074 == 74 minority instances leaves exactly 30 of them in the
+    # bag frame, at MIN_CLASS_SIZE; 1000 * 0.072 == 72 leaves 29, one under.
     pools = {
-        "at_floor": pool("at_floor", 1000, 0.03),
-        "under_floor": pool("under_floor", 1000, 0.029),
+        "at_floor": pool("at_floor", 1000, 0.074),
+        "under_floor": pool("under_floor", 1000, 0.072),
     }
 
     spec = real_data.build_spec(pools, seed=1)
@@ -801,20 +884,28 @@ def test_a_pool_is_built_from_out_of_fold_probabilities(raw_frame):
 
     built = real_data.build_pool("fake", X, y, cv_folds=3, random_state=0)
 
-    assert built.scores.shape == (len(y), 2)
+    # Two frames, one column per class in each, every row a distribution.
+    assert built.scores.shape[1] == 2
+    assert built.reference_scores.shape[1] == 2
+    assert built.scores.shape[0] == len(built.labels)
+    assert built.reference_scores.shape[0] == len(built.reference_labels)
     assert set(built.labels) <= {0, 1}
     np.testing.assert_allclose(built.scores.sum(axis=1), 1.0)
+    np.testing.assert_allclose(built.reference_scores.sum(axis=1), 1.0)
 
 
 def test_the_higher_sorted_label_is_positive(raw_frame):
     # The same rule sweep.observed_prevalence reads a drawn bag's prevalence
     # by, so "positive" means the same thing here as in a synthetic run.
+    # Counted over both frames together, since the split is a partition and
+    # neither frame alone lines up with ``y`` row for row any more.
     X, y = raw_frame
 
     built = real_data.build_pool("fake", X, y, cv_folds=3, random_state=0)
 
-    assert set(built.labels[y.to_numpy() == "pos"]) == {1}
-    assert set(built.labels[y.to_numpy() == "neg"]) == {0}
+    encoded = np.concatenate([built.labels, built.reference_labels])
+    assert (encoded == 1).sum() == (y.to_numpy() == "pos").sum()
+    assert (encoded == 0).sum() == (y.to_numpy() == "neg").sum()
 
 
 def test_a_pool_larger_than_the_cap_is_subsampled(raw_frame):
@@ -822,7 +913,7 @@ def test_a_pool_larger_than_the_cap_is_subsampled(raw_frame):
 
     built = real_data.build_pool("fake", X, y, cap=30, cv_folds=3, random_state=0)
 
-    assert len(built.labels) == 30
+    assert len(built.labels) + len(built.reference_labels) == 30
 
 
 def test_a_pool_within_the_cap_is_not_subsampled(raw_frame):
@@ -830,7 +921,108 @@ def test_a_pool_within_the_cap_is_not_subsampled(raw_frame):
 
     built = real_data.build_pool("fake", X, y, cap=1000, cv_folds=3, random_state=0)
 
-    assert len(built.labels) == len(y)
+    assert len(built.labels) + len(built.reference_labels) == len(y)
+
+
+# ---------------------------------------------------------------------------
+# The two frames: what bags come from, and what they are matched against
+# ---------------------------------------------------------------------------
+#
+# ADR-0013. Before it, one frame did both jobs, so a bag's own instances sat
+# inside the distribution it was being estimated against — 0.2% of the
+# reference for a bag of 100 drawn from 50,000, and half of it for a bag of
+# 1000 drawn from 2,000. Out-of-fold scoring (ADR-0005) answers overconfidence
+# and never touched this.
+
+
+def test_the_two_frames_share_no_instance():
+    # Asserted on the indices the split returns, not on the score rows it
+    # produces: a small pool's out-of-fold probability vectors repeat (a
+    # 60-row forest emits the same vector for many instances), so comparing
+    # rows would report an overlap that is a coincidence of values rather
+    # than a shared instance.
+    labels = np.repeat([0, 1, 2], 40)
+
+    reference, bag = real_data._split_frames(labels, 0.6, random_state=0)
+
+    assert set(reference).isdisjoint(bag)
+    assert sorted([*reference, *bag]) == list(range(len(labels)))
+
+
+def test_the_two_frames_together_account_for_the_whole_pool(raw_frame):
+    X, y = raw_frame
+
+    built = real_data.build_pool("fake", X, y, cv_folds=3, random_state=0)
+
+    assert len(built.labels) + len(built.reference_labels) == len(y)
+
+
+def test_the_reference_frame_takes_the_configured_share(raw_frame):
+    X, y = raw_frame
+
+    built = real_data.build_pool(
+        "fake", X, y, cv_folds=3, random_state=0, reference_fraction=0.6
+    )
+
+    assert len(built.reference_labels) == round(0.6 * len(y))
+
+
+def test_the_split_is_stratified_so_both_frames_hold_every_class(raw_frame):
+    # An unstratified split can leave a rare class out of one side entirely,
+    # which would shrink the class space a quantifier estimates over for
+    # reasons that have nothing to do with the dataset.
+    X, y = raw_frame
+
+    built = real_data.build_pool("fake", X, y, cv_folds=3, random_state=0)
+
+    assert set(built.labels) == set(built.reference_labels)
+
+
+def test_a_bag_is_drawn_from_the_bag_frame_alone():
+    built = pool("fake", 600, 0.4)
+
+    indices = real_data.draw_bag(built, 0.4, 100, random_state=0)
+
+    assert indices.max() < len(built.labels)
+
+
+def test_the_reference_a_method_reads_is_the_reference_frame():
+    built = pool("fake", 600, 0.4)
+
+    reference = built.reference
+
+    assert len(reference.labels) == len(built.reference_labels)
+    assert len(reference.labels) != len(built.labels)
+
+
+def test_the_class_floor_is_measured_on_the_bag_frame():
+    # The floor exists to say whether bags can be filled (#18), and bags come
+    # only from the bag frame — so a class with enough instances overall but
+    # too few on the side bags are drawn from does not clear it.
+    scores, labels = scored(1000, 0.04)
+
+    built = framed("thin", scores, labels)
+
+    minority = int((built.labels == 1).sum())
+    assert minority < real_data.MIN_CLASS_SIZE
+    assert not real_data._meets_class_floor(built)
+
+
+def test_spreading_the_folds_over_cores_leaves_the_pool_bit_identical(raw_frame):
+    # Asserted bit-identical, not merely close: these scores are the reference
+    # score set every method matches a bag against, and the base quantifiers
+    # search it by discretised minimisation, where a tie broken the other way
+    # is a different estimate. ``build_pool`` holds the forest itself at one
+    # worker for exactly this reason — parallelising its trees sums their
+    # probabilities in a different order and measured 2.2e-16 off — so this
+    # test is what keeps that choice from being quietly undone.
+    X, y = raw_frame
+
+    serial = real_data.build_pool("fake", X, y, cv_folds=3, random_state=0, n_jobs=1)
+    parallel = real_data.build_pool("fake", X, y, cv_folds=3, random_state=0, n_jobs=-1)
+
+    assert np.array_equal(serial.scores, parallel.scores)
+    assert np.array_equal(serial.labels, parallel.labels)
 
 
 def test_a_single_class_target_is_rejected():
@@ -859,7 +1051,8 @@ def test_a_multiclass_target_is_accepted(multiclass_raw_frame):
 
     built = real_data.build_pool("fake", X, y, cv_folds=3, random_state=0)
 
-    assert built.scores.shape == (len(y), 3)
+    assert built.scores.shape == (len(built.labels), 3)
+    assert built.reference_scores.shape == (len(built.reference_labels), 3)
     assert set(built.labels) == {0, 1, 2}
     np.testing.assert_allclose(built.scores.sum(axis=1), 1.0)
 
@@ -867,10 +1060,11 @@ def test_a_multiclass_target_is_accepted(multiclass_raw_frame):
 def test_multiclass_labels_follow_the_sorted_original_label_order(multiclass_raw_frame):
     # "high" < "low" < "mid" alphabetically — the same sorted-then-indexed
     # rule _encode_labels applies to two classes, generalised (real_data.py).
+    # Counted over both frames, for the reason the binary case above gives.
     X, y = multiclass_raw_frame
 
     built = real_data.build_pool("fake", X, y, cv_folds=3, random_state=0)
 
-    assert set(built.labels[y.to_numpy() == "high"]) == {0}
-    assert set(built.labels[y.to_numpy() == "low"]) == {1}
-    assert set(built.labels[y.to_numpy() == "mid"]) == {2}
+    encoded = np.concatenate([built.labels, built.reference_labels])
+    for code, original in enumerate(("high", "low", "mid")):
+        assert (encoded == code).sum() == (y.to_numpy() == original).sum()

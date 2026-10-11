@@ -235,6 +235,36 @@ def save(runs, kind, root=ROOT):
     return path
 
 
+def save_merged_by_dataset(produced, kind, root=ROOT):
+    """Write ``produced`` into an existing table, replacing only its datasets.
+
+    The real-data table holds binary and multiclass runs together (module
+    docstring), but one invocation of ``real_data.py`` produces only one of
+    them — or, with ``--dataset``, only part of one. Writing through
+    :func:`save` would make each invocation discard every dataset it did not
+    itself run, so the published binary table would not survive the multiclass
+    run that was supposed to join it.
+
+    Replacing rather than appending is what makes a re-run idempotent: a
+    dataset re-run after a fix should end up with one set of runs, not two
+    silently averaged together by every reader downstream. The unit is the
+    dataset because that is what an invocation is scoped to — ``--dataset``
+    names datasets, a pool belongs to one, and a cell names one.
+
+    No existing table is the ordinary first-run case, and is just a
+    :func:`save`. Validation is :func:`save`'s throughout, applied to the
+    merged frame, so a merge cannot smuggle in a row a direct write would have
+    refused.
+    """
+    columns = list(columns_for(kind))
+    if available(kind, root=root):
+        existing = load(kind, root=root)
+        kept = existing[~existing["dataset"].isin(set(produced["dataset"]))]
+        produced = pd.concat([kept, produced], ignore_index=True)[columns]
+
+    return save(produced, kind, root=root)
+
+
 def load(kind, root=ROOT, columns=None):
     """Read a table of runs by kind.
 

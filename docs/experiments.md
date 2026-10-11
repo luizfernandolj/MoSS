@@ -78,11 +78,18 @@ for one dataset) — see [running.md](running.md).
 - **Datasets** (8): `mushroom`, `banknote_authentication`,
   `haberman_survival`, `pima_diabetes`, `electricity_elec2`, `airlines`,
   `miniboone`, `online_news_popularity`
-- **Classifier**: `RandomForestClassifier`, scored out-of-fold via 10-fold
-  stratified cross-validation (never refit on the whole pool — the
-  reference is never the classifier's own training scores,
-  [ADR-0005](adr/0005-real-data-experiment-design.md))
 - **Pool cap**: ~50,000 instances per dataset
+- **Frames**: each pool is split 60/40, stratified, into a *reference frame*
+  and a *bag frame* that share no instance
+  ([ADR-0013](adr/0013-disjoint-reference-and-bag-frames.md)). Bags are drawn
+  only from the bag frame; the reference frame is the distribution every
+  method matches them against.
+- **Classifier**: `RandomForestClassifier`. The reference frame is scored
+  out-of-fold via 10-fold stratified cross-validation *within itself*, so the
+  reference is never the classifier's own training scores
+  ([ADR-0005](adr/0005-real-data-experiment-design.md)). The bag frame is
+  scored by one forest fitted on the whole reference frame, which has never
+  seen it.
 - **Target prevalences**: 21 values bracketing [0, 1] (0.01, then 19 evenly
   spaced points from `linspace(0, 1, 21)`, then 0.99)
 - **Bag size**: 100, 500, 1000, 5000 (`sweep.BAG_SIZES`, swept via
@@ -94,13 +101,14 @@ for one dataset) — see [running.md](running.md).
 - **Base quantifiers / method simulators**: the same registries as the
   synthetic sweep (`sweep.BASE_QUANTIFIERS`, `sweep.METHOD_SIMULATORS`)
 
-A cell a dataset's pool cannot supply — e.g. Haberman has 81 minority
-instances and cannot fill a size-100 bag above 80% positive — is recorded
-as an explicit missing run rather than skipped or padded
-([ADR-0005](adr/0005-real-data-experiment-design.md)). At the larger bag
-sizes this can consume a whole dataset rather than one cell: neither
-Haberman nor Pima Diabetes can fill a bag of 5000 at all, even with #18's
-bootstrap-replication cap (see [results.md](results.md#bag-size-sensitivity)).
+A cell a dataset's pool cannot supply is recorded as an explicit missing run
+rather than skipped or padded
+([ADR-0005](adr/0005-real-data-experiment-design.md)). Capacity is a property
+of the **bag frame**, not of the dataset: Haberman's 306 instances become a
+bag frame of 123, 33 of them minority, so every prevalence is satisfiable at
+`bag_size=100` within #18's replication cap, only 10%–30% positive is at 500,
+and nothing at all at 1000 or 5000. At the larger bag sizes a shortfall
+consumes a whole dataset rather than one cell.
 
 ## Real-data, multiclass
 
@@ -109,12 +117,38 @@ The same pipeline as above, on datasets with more than two classes
 the simplex simulators (MVN, Dirichlet) do work the binary uniform
 simulator cannot attempt. Produced by `real_data.py --multiclass`.
 
-- **Datasets** (2): `dry_bean` (7 classes), `yeast` (10 classes) — chosen
-  for different class counts rather than matching the binary table's
-  coverage claim
+- **Datasets** (20 that reach the grid), by class count:
+  - 11: `healthcare`, `music_genre`
+  - 10: `mfeat`, `fashion_mnist`, `digits`
+  - 7: `dry_bean`, `covertype`, `fabert`
+  - 6: `dermatology`, `har`, `mosquitoes`, `satimage`
+  - 5: `phishing_url`, `microaggregation2`, `student_performance`
+  - 4: `customer_segmentation`, `yeast_schumacher`
+  - 3: `mfeat_icdm21`, `star_classification`, `academic_success`
+
+  `dry_bean` is fetched through mlquantify; all the rest bar `yeast` are
+  CSVs under `data/`, registered in
+  `utils/local_datasets.MULTICLASS_DATASETS` — which also records which CSVs
+  under `data/` were *not* registered, and why. `yeast` is registered and
+  then dropped: its smallest class is under `real_data.MIN_CLASS_SIZE`, so
+  the class floor excludes it
+  ([#18](https://github.com/luizfernandolj/MoSS/issues/18)), which is why
+  the table has 20 datasets and the registry names 21.
 - **Target prevalences**: 21 prevalence vectors per dataset, drawn uniformly
   from that dataset's class-count simplex (a Dirichlet(1, ..., 1) draw),
   seeded per dataset so two datasets sharing a class count still draw
   different grids
 - **Bag size, repetitions, seed, classifier, base quantifiers, method
   simulators**: same as the binary real-data spec above
+
+A class the target prevalence rounds down to zero instances — which a
+uniform simplex draw produces often at a bag size of 100 and a high class
+count (8 of the 21 vectors drawn for an 11-class dataset) — is recorded in
+`true_prevalence` at zero rather than left out of the vector, so a run's
+estimate and its truth are always the same length.
+
+Two CSVs under `data/` were left out on cost rather than on the class floor:
+`quapy_data/letter` (26 classes) and `ours/Walking` (22). The one-vs-rest
+decomposition fits one base quantifier per class, so either costs roughly
+twice the rest of this table put together for one more point of simplex
+dimension.
